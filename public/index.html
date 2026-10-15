@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AliShop — Comparador de Preços AliExpress vs Shopee</title>
+  <style>
+    :root {
+      --ali-red: #E62E04;
+      --shp-orange: #EE4D2D;
+      --bg: #F5F6F8;
+      --text: #19191D;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    body { background: var(--bg); color: var(--text); }
+    header { background: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .logo { font-size: 26px; font-weight: 900; }
+    .logo .ali { color: var(--ali-red); }
+    .logo .shop { color: var(--shp-orange); }
+    .hero { max-width: 900px; margin: 40px auto; padding: 20px; text-align: center; }
+    .badge { display: inline-block; background: #FFF0ED; color: var(--ali-red); padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-bottom: 16px; }
+    h1 { font-size: 38px; line-height: 1.2; margin-bottom: 16px; font-weight: 800; }
+    p { font-size: 18px; color: #555; max-width: 650px; margin: 0 auto 30px auto; line-height: 1.5; }
+    .cta-btn { display: inline-block; background: linear-gradient(135deg, var(--ali-red), var(--shp-orange)); color: #fff; text-decoration: none; padding: 14px 28px; border-radius: 30px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 14px rgba(230,46,4,0.3); }
+    .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+    .card { background: #fff; padding: 24px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); text-align: left; }
+    .card h3 { font-size: 18px; margin-bottom: 8px; color: #222; }
+    .card p { font-size: 14px; color: #666; margin: 0; }
+    footer { text-align: center; padding: 30px; font-size: 13px; color: #888; border-top: 1px solid #E5E7EB; margin-top: 40px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo"><span class="ali">Ali</span><span class="shop">Shop</span></div>
+    <div><strong>Comparador Oficial de Ofertas</strong></div>
+  </header>
+
+  <main class="hero">
+    <div class="badge">Disponível para Android</div>
+    <h1>Compare Preços do AliExpress e Shopee em Tempo Real</h1>
+    <p>O AliShop é o primeiro aplicativo mobile focado em encontrar o menor preço absoluto entre AliExpress e Shopee para eletrônicos, smartwatches, fones e acessórios com cupons de frete grátis.</p>
+    <a href="#" class="cta-btn">Baixar Aplicativo Android (.APK)</a>
+  </main>
+
+  <section class="features">
+    <div class="card">
+      <h3>⚡ Comparação Lado a Lado</h3>
+      <p>Veja os preços das duas plataformas sincronizados na mesma tela e descubra onde comprar mais barato.</p>
+    </div>
+    <div class="card">
+      <h3>🔥 Super Ofertas Diárias</h3>
+      <p>Feed com produtos com mais de 40% de desconto e cupons exclusivos verificados.</p>
+    </div>
+    <div class="card">
+      <h3>📉 Monitoramento de Preços</h3>
+      <p>Salve seus produtos favoritos e seja alertado assim que o valor cair nas lojas oficiais.</p>
+    </div>
+  </section>
+
+  <footer>
+    &copy; 2026 AliShop App — Todos os direitos reservados.
+  </footer>
+</body>
+</html>
