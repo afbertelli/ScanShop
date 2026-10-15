@@ -1,0 +1,6 @@
+{
+  "name": "ScanShop",
+  "description": "Comparador de preços AliExpress vs. Shopee com ofertas em tempo real e redirecionamento de afiliados",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
