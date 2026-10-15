@@ -282,7 +282,7 @@ fun SearchBarComponent(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            ProductFilter.values().forEach { filter ->
+            ProductFilter.entries.forEach { filter ->
                 val isSelected = selectedFilter == filter
                 FilterChip(
                     selected = isSelected,

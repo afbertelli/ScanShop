@@ -25,10 +25,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.LocalShipping
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material3.Button
@@ -383,34 +384,57 @@ fun CompactProductCard(
                 // Push CTA button to the bottom of the card
                 Spacer(modifier = Modifier.weight(1f, fill = true))
 
-                // CTA Button - "Ir à Loja"
-                Button(
-                    onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(30.dp)
-                        .testTag("btn_buy_${product.id}"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = storeColor
-                    ),
-                    shape = RoundedCornerShape(6.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                // CTA Row - "Ir à Loja" + "Compartilhar"
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Ir à Loja",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        maxLines = 1,
-                        softWrap = false
-                    )
-                    Spacer(modifier = Modifier.width(3.dp))
-                    Icon(
-                        imageVector = Icons.Default.OpenInNew,
-                        contentDescription = null,
-                        modifier = Modifier.size(11.dp),
-                        tint = Color.White
-                    )
+                    Button(
+                        onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(30.dp)
+                            .testTag("btn_buy_${product.id}"),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = storeColor
+                        ),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+                    ) {
+                        Text(
+                            text = "Ir à Loja",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            modifier = Modifier.size(11.dp),
+                            tint = Color.White
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { DeepLinkUtils.shareProduct(context, product) },
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFF1F5F9))
+                            .border(BorderStroke(0.5.dp, Color(0xFFCBD5E1)), RoundedCornerShape(6.dp))
+                            .testTag("btn_share_${product.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = "Compartilhar",
+                            tint = Color(0xFF475569),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
                 }
             }
         }
@@ -656,35 +680,58 @@ fun UnifiedProductCard(
                 }
             }
 
-            // CTA Button - "Ir à Loja" preserved and interactive
-            Button(
-                onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(34.dp)
-                    .testTag("btn_buy_unified_${product.id}"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = storeColor
-                ),
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            // CTA Row - "Ir à Loja" + "Compartilhar"
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Ir à Loja " + product.store.displayName + " (" + product.formattedPromoPrice + ")",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Default.OpenInNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp),
-                    tint = Color.White
-                )
+                Button(
+                    onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("btn_buy_unified_${product.id}"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = storeColor
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Ir à Loja " + product.store.displayName + " (" + product.formattedPromoPrice + ")",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = Color.White
+                    )
+                }
+
+                IconButton(
+                    onClick = { DeepLinkUtils.shareProduct(context, product) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .border(BorderStroke(0.5.dp, Color(0xFFCBD5E1)), RoundedCornerShape(8.dp))
+                        .testTag("btn_share_unified_${product.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Compartilhar",
+                        tint = Color(0xFF475569),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }
@@ -846,35 +893,58 @@ fun FavoriteProductCard(
                 }
             }
 
-            // Buy button - Preserved and interactive
-            Button(
-                onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(34.dp)
-                    .testTag("btn_buy_fav_${product.id}"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = storeColor
-                ),
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            // Buy & Share row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "Ir à Loja " + product.store.displayName + " (" + product.formattedPromoPrice + ")",
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    maxLines = 1,
-                    softWrap = false,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Icon(
-                    imageVector = Icons.Default.OpenInNew,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp),
-                    tint = Color.White
-                )
+                Button(
+                    onClick = { DeepLinkUtils.openAffiliateProduct(context, product) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("btn_buy_fav_${product.id}"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = storeColor
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                ) {
+                    Text(
+                        text = "Ir à Loja " + product.store.displayName + " (" + product.formattedPromoPrice + ")",
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = Color.White
+                    )
+                }
+
+                IconButton(
+                    onClick = { DeepLinkUtils.shareProduct(context, product) },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFF1F5F9))
+                        .border(BorderStroke(0.5.dp, Color(0xFFCBD5E1)), RoundedCornerShape(8.dp))
+                        .testTag("btn_share_fav_${product.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Compartilhar",
+                        tint = Color(0xFF475569),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
             }
         }
     }

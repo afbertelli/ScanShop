@@ -23,7 +23,7 @@ abstract class AliShopDatabase : RoomDatabase() {
                     context.applicationContext,
                     AliShopDatabase::class.java,
                     "alishop_database"
-                ).fallbackToDestructiveMigration().build()
+                ).fallbackToDestructiveMigration(true).build()
                 INSTANCE = instance
                 instance
             }

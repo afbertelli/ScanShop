@@ -23,7 +23,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Compare
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.ShoppingBag

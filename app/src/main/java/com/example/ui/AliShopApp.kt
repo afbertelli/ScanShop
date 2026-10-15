@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -112,6 +113,10 @@ fun AliShopApp(
         )
     )
 
+    BackHandler(enabled = selectedTab != 0) {
+        viewModel.selectTab(0)
+    }
+
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
@@ -211,7 +216,8 @@ fun AliShopApp(
                     state = dealsState,
                     favoriteIds = favoriteIds,
                     onStoreFilterSelected = viewModel::setDealsStoreFilter,
-                    onToggleFavorite = viewModel::toggleFavorite
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onRefreshDeals = viewModel::refreshDeals
                 )
                 2 -> FavoritesScreen(
                     favorites = favorites,

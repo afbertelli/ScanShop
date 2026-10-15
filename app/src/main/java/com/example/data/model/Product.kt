@@ -34,7 +34,7 @@ data class Product(
         get() = formatBrl(originalPrice)
 
     private fun formatBrl(amount: Double): String {
-        val format = NumberFormat.getCurrencyInstance(Locale("pt", "BR"))
+        val format = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))
         return format.format(amount)
     }
 }

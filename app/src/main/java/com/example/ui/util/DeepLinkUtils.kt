@@ -54,4 +54,47 @@ object DeepLinkUtils {
             }
         }
     }
+
+    /**
+     * Compartilha a oferta com texto formatado e link direto
+     */
+    fun shareProduct(context: Context, product: Product) {
+        try {
+            val text = "Olha essa oferta que encontrei no ScanShop:\n\n${product.title}\nPor apenas ${product.formattedPromoPrice} (${product.discountPercentage}% OFF) no ${product.store.displayName}!\n\nConfira: ${product.affiliateUrl}"
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_TEXT, text)
+                type = "text/plain"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            val shareIntent = Intent.createChooser(sendIntent, "Compartilhar Oferta").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(shareIntent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Não foi possível compartilhar", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Compartilha o resumo da comparação de preços
+     */
+    fun shareComparison(context: Context, query: String, winner: Product?, priceDelta: Double) {
+        try {
+            val winnerText = if (winner != null) {
+                "Melhor preço: ${winner.store.displayName} por ${winner.formattedPromoPrice} (diferença média de ${priceDelta.toInt()}%)."
+            } else ""
+            val text = "Comparativo de Preços ScanShop:\n\nBusca: \"$query\"\n$winnerText\n\nEconomize comparando preços do AliExpress e Shopee em tempo real!"
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                putExtra(Intent.EXTRA_TEXT, text)
+                type = "text/plain"
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            val shareIntent = Intent.createChooser(sendIntent, "Compartilhar Comparativo").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(shareIntent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Não foi possível compartilhar", Toast.LENGTH_SHORT).show()
+        }
+    }
 }

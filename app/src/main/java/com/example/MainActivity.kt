@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.room.Room
 import com.example.data.ai.AiSearchService
 import com.example.data.local.AliShopDatabase
 import com.example.data.repository.AffiliateProductRepository
@@ -18,11 +17,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val db = Room.databaseBuilder(
-            applicationContext,
-            AliShopDatabase::class.java,
-            "alishop_database"
-        ).fallbackToDestructiveMigration().build()
+        val db = AliShopDatabase.getDatabase(applicationContext)
 
         val favoriteRepository = FavoriteRepository(db.favoriteDao())
         val affiliateRepository = AffiliateProductRepository()

@@ -31,7 +31,10 @@ enum class ProductFilter(val label: String) {
     HIGHEST_DISCOUNT("Maior Desconto"),
     BEST_RATED("Melhores Avaliados"),
     FREE_SHIPPING("Frete Grátis"),
-    NATIONAL_ONLY("Estoque Nacional")
+    NATIONAL_ONLY("Estoque Nacional"),
+    UNDER_50("Até R$ 50"),
+    UNDER_100("Até R$ 100"),
+    UNDER_200("Até R$ 200")
 }
 
 /**
@@ -47,16 +50,29 @@ class AffiliateProductRepository {
         private const val TAG = "AffiliateRepo"
         private const val SHOPEE_GRAPHQL_URL = "https://open-api.affiliate.shopee.com.br/graphql"
         private const val ALIEXPRESS_SYNC_URL = "https://api-sg.aliexpress.com/sync"
-        private const val GEMINI_MODEL = "gemini-3.8-flash"
+        private const val GEMINI_MODEL = "gemini-2.5-flash"
         private const val GEMINI_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/$GEMINI_MODEL:generateContent"
     }
 
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            val request = chain.request().newBuilder()
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36")
+                .header("Accept", "application/json, text/plain, */*")
+                .header("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+                .build()
+            chain.proceed(request)
+        }
         .build()
+
+    // Cache em memória de alta performance com TTL de 5 minutos
+    private val searchCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, ComparisonResult>>()
+    private val dealsCache = java.util.concurrent.atomic.AtomicReference<Pair<Long, List<Product>>?>(null)
+    private val CACHE_TTL_MS = 5 * 60 * 1000L // 5 minutos
 
     private fun getShopeeAppId(): String {
         val id = try { BuildConfig.SHOPEE_APP_ID } catch (e: Exception) { "" }
@@ -95,15 +111,17 @@ class AffiliateProductRepository {
         val env = System.getenv("GEMINI_API_KEY") ?: ""
         if (env.isNotBlank() && env != "YOUR_GEMINI_API_KEY") return env
 
-        return "AQ.Ab8RN6LZYOsHwkf3yp8SbAHd_NO5ZK7wfe8m7H0TftL1wmFJ_w"
+        return ""
     }
 
     /**
      * Busca produtos em tempo real consultando em paralelo a Shopee e o AliExpress.
+     * Utiliza cache em memória de 5 minutos para velocidade instantânea (0ms em repetições).
      */
     suspend fun searchProducts(
         query: String,
-        filter: ProductFilter = ProductFilter.RELEVANCE
+        filter: ProductFilter = ProductFilter.RELEVANCE,
+        forceRefresh: Boolean = false
     ): ComparisonResult = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.isEmpty()) {
@@ -115,24 +133,48 @@ class AffiliateProductRepository {
             )
         }
 
-        // Consultas simultâneas nas APIs oficiais
+        val cacheKey = "$trimmed|${filter.name}"
+        if (!forceRefresh) {
+            val cached = searchCache[cacheKey]
+            if (cached != null && (System.currentTimeMillis() - cached.first) < CACHE_TTL_MS) {
+                return@withContext cached.second
+            }
+        }
+
+        // Consultas simultâneas nas APIs oficiais com proteção individual contra exceções
         val (aliList, shpList) = coroutineScope {
-            val aliDeferred = async { fetchAliExpressProducts(trimmed, 10) }
-            val shpDeferred = async { fetchShopeeProducts(trimmed, 10) }
+            val aliDeferred = async {
+                try {
+                    fetchAliExpressProducts(trimmed, 15)
+                } catch (e: Exception) {
+                    Log.e(TAG, "AliExpress search exception", e)
+                    emptyList()
+                }
+            }
+            val shpDeferred = async {
+                try {
+                    fetchShopeeProducts(trimmed, 15)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Shopee search exception", e)
+                    emptyList()
+                }
+            }
             Pair(aliDeferred.await(), shpDeferred.await())
         }
 
-        // Se uma ou ambas as APIs não retornarem produtos para a busca específica, complementa via IA
+        // Se uma ou ambas as APIs não retornarem produtos para a busca específica, tenta fallback via IA se chave existir
         val finalAli = if (aliList.isNotEmpty()) {
             aliList
         } else {
-            fetchGeminiProducts(trimmed, StoreType.ALIEXPRESS)
+            val gemini = fetchGeminiProducts(trimmed, StoreType.ALIEXPRESS)
+            if (gemini.isNotEmpty()) gemini else aliList
         }
 
         val finalShp = if (shpList.isNotEmpty()) {
             shpList
         } else {
-            fetchGeminiProducts(trimmed, StoreType.SHOPEE)
+            val gemini = fetchGeminiProducts(trimmed, StoreType.SHOPEE)
+            if (gemini.isNotEmpty()) gemini else shpList
         }
 
         val filteredAli = applyFilter(finalAli, filter)
@@ -150,7 +192,7 @@ class AffiliateProductRepository {
             ((diff / higher) * 100).roundToInt().toDouble()
         } else 0.0
 
-        ComparisonResult(
+        val result = ComparisonResult(
             query = trimmed,
             aliExpressProducts = filteredAli,
             shopeeProducts = filteredShp,
@@ -160,20 +202,44 @@ class AffiliateProductRepository {
             averageShopeePrice = avgShp,
             priceDeltaPercentage = delta
         )
+        searchCache[cacheKey] = Pair(System.currentTimeMillis(), result)
+        result
     }
 
     /**
-     * Obtém as super ofertas do dia em tempo real via Shopee e AliExpress.
+     * Obtém as super ofertas do dia em tempo real via Shopee e AliExpress com cache de 5min.
      */
-    suspend fun getAllDeals(): List<Product> = withContext(Dispatchers.IO) {
+    suspend fun getAllDeals(forceRefresh: Boolean = false): List<Product> = withContext(Dispatchers.IO) {
+        if (!forceRefresh) {
+            val cached = dealsCache.get()
+            if (cached != null && (System.currentTimeMillis() - cached.first) < CACHE_TTL_MS) {
+                return@withContext cached.second
+            }
+        }
+
         coroutineScope {
-            val aliDeferred = async { fetchAliExpressDeals() }
-            val shpDeferred = async { fetchShopeeDeals() }
+            val aliDeferred = async {
+                try {
+                    fetchAliExpressDeals()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Ali deals error", e)
+                    emptyList()
+                }
+            }
+            val shpDeferred = async {
+                try {
+                    fetchShopeeDeals()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Shopee deals error", e)
+                    emptyList()
+                }
+            }
             val ali = aliDeferred.await()
             val shp = shpDeferred.await()
 
             val all = (ali + shp).sortedByDescending { it.discountPercentage }
             if (all.isNotEmpty()) {
+                dealsCache.set(Pair(System.currentTimeMillis(), all))
                 all
             } else {
                 fetchGeminiDeals()
@@ -185,21 +251,17 @@ class AffiliateProductRepository {
     // INTEGRAÇÃO REAL SHOPEE AFFILIATE OPEN API (GraphQL)
     // -------------------------------------------------------------
 
-    private fun fetchShopeeProducts(keyword: String, limit: Int = 10): List<Product> {
+    private fun fetchShopeeProducts(keyword: String, limit: Int = 15): List<Product> {
         val appId = getShopeeAppId()
         val secret = getShopeeSecret()
         if (appId.isBlank() || secret.isBlank()) return emptyList()
 
         try {
             val timestamp = (System.currentTimeMillis() / 1000).toInt()
+            val escapedKeyword = JSONObject.quote(keyword)
+            val queryStr = "{ productOfferV2(keyword: $escapedKeyword, page: 1, limit: $limit) { nodes { itemId productName imageUrl price priceMin priceMax ratingStar sales productLink offerLink } } }"
             val queryPayload = JSONObject().apply {
-                put(
-                    "query",
-                    "query GetProducts(\$keyword: String) { productOfferV2(keyword: \$keyword, page: 1, limit: $limit) { nodes { itemId productName imageUrl price priceMin priceMax ratingStar sales productLink offerLink } } }"
-                )
-                put("variables", JSONObject().apply {
-                    put("keyword", keyword)
-                })
+                put("query", queryStr)
             }.toString()
 
             val factor = "$appId$timestamp$queryPayload$secret"
@@ -277,18 +339,16 @@ class AffiliateProductRepository {
         }
     }
 
-    private fun fetchShopeeDeals(): List<Product> {
+    private fun fetchShopeeDeals(limit: Int = 15): List<Product> {
         val appId = getShopeeAppId()
         val secret = getShopeeSecret()
         if (appId.isBlank() || secret.isBlank()) return emptyList()
 
         try {
             val timestamp = (System.currentTimeMillis() / 1000).toInt()
+            val queryStr = "{ productOfferV2(page: 1, limit: $limit) { nodes { itemId productName imageUrl price priceMin priceMax ratingStar sales productLink offerLink } } }"
             val queryPayload = JSONObject().apply {
-                put(
-                    "query",
-                    "query GetDeals { productOfferV2(page: 1, limit: 12) { nodes { itemId productName imageUrl price priceMin priceMax ratingStar sales productLink offerLink } } }"
-                )
+                put("query", queryStr)
             }.toString()
 
             val factor = "$appId$timestamp$queryPayload$secret"
@@ -563,7 +623,7 @@ class AffiliateProductRepository {
     }
 
     // -------------------------------------------------------------
-    // FALLBACK INTELIGENTE EM TEMPO REAL VIA GEMINI 3.8 FLASH
+    // FALLBACK INTELIGENTE EM TEMPO REAL VIA GEMINI 2.5 FLASH
     // -------------------------------------------------------------
 
     private fun fetchGeminiProducts(query: String, store: StoreType): List<Product> {
@@ -775,6 +835,9 @@ class AffiliateProductRepository {
             ProductFilter.BEST_RATED -> list.sortedByDescending { it.rating }
             ProductFilter.FREE_SHIPPING -> list.filter { it.freeShipping }.sortedBy { it.promoPrice }
             ProductFilter.NATIONAL_ONLY -> list.filter { it.nationalSeller }.sortedBy { it.promoPrice }
+            ProductFilter.UNDER_50 -> list.filter { it.promoPrice <= 50.0 }.sortedBy { it.promoPrice }
+            ProductFilter.UNDER_100 -> list.filter { it.promoPrice <= 100.0 }.sortedBy { it.promoPrice }
+            ProductFilter.UNDER_200 -> list.filter { it.promoPrice <= 200.0 }.sortedBy { it.promoPrice }
         }
     }
 }

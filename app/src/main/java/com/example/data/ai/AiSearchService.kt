@@ -75,7 +75,7 @@ class AiSearchService {
 
     companion object {
         private const val TAG = "AiSearchService"
-        private const val MODEL_NAME = "gemini-3.8-flash"
+        private const val MODEL_NAME = "gemini-2.5-flash"
         private const val GEMINI_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
@@ -960,13 +960,13 @@ class AiSearchService {
             }
 
             val systemEnv = System.getenv("GEMINI_API_KEY") ?: ""
-            if (systemEnv.isNotBlank() && systemEnv != "YOUR_GEMINI_API_KEY") {
+            if (systemEnv.isNotBlank() && systemEnv != "YOUR_GEMINI_API_KEY" && !systemEnv.startsWith("AQ.")) {
                 return systemEnv
             }
 
-            "AQ.Ab8RN6LZYOsHwkf3yp8SbAHd_NO5ZK7wfe8m7H0TftL1wmFJ_w"
+            ""
         } catch (e: Exception) {
-            "AQ.Ab8RN6LZYOsHwkf3yp8SbAHd_NO5ZK7wfe8m7H0TftL1wmFJ_w"
+            ""
         }
     }
 

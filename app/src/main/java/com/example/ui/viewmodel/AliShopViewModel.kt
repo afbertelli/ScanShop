@@ -81,7 +81,7 @@ class AliShopViewModel(
         _searchState.value = _searchState.value.copy(query = newQuery)
     }
 
-    fun performSearch(queryToSearch: String = _searchState.value.query) {
+    fun performSearch(queryToSearch: String = _searchState.value.query, forceRefresh: Boolean = false) {
         val trimmed = queryToSearch.trim()
         if (trimmed.isEmpty()) {
             _searchState.value = _searchState.value.copy(
@@ -109,7 +109,8 @@ class AliShopViewModel(
             try {
                 val baseResult = affiliateRepository.searchProducts(
                     query = trimmed,
-                    filter = _searchState.value.filter
+                    filter = _searchState.value.filter,
+                    forceRefresh = forceRefresh
                 )
 
                 // Optional AI refinement
@@ -153,10 +154,14 @@ class AliShopViewModel(
         _searchState.value = _searchState.value.copy(viewMode = newMode)
     }
 
-    fun loadDeals() {
+    fun refreshDeals() {
+        loadDeals(forceRefresh = true)
+    }
+
+    fun loadDeals(forceRefresh: Boolean = false) {
         viewModelScope.launch {
             _dealsState.value = _dealsState.value.copy(isLoading = true)
-            val allDeals = affiliateRepository.getAllDeals()
+            val allDeals = affiliateRepository.getAllDeals(forceRefresh = forceRefresh)
             _dealsState.value = _dealsState.value.copy(
                 isLoading = false,
                 superDeals = allDeals
