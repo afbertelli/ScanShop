@@ -129,5 +129,74 @@ class ExampleUnitTest {
         assertTrue(developerEmail.contains("@"))
         assertEquals("Adimilson Fernando Bertelli Informatica ME", companyName)
     }
+
+    @Test
+    fun testSellerTrustEngineEvaluation() {
+        val officialProduct = com.example.data.model.Product(
+            id = "shp_official_01",
+            store = com.example.data.model.StoreType.SHOPEE,
+            title = "Samsung Galaxy S23 5G 128GB - Loja Oficial",
+            imageUrl = "https://example.com/s23.jpg",
+            originalPrice = 3999.0,
+            promoPrice = 2899.0,
+            discountPercentage = 27,
+            rating = 4.9,
+            salesCount = 3500,
+            freeShipping = true,
+            nationalSeller = true,
+            couponAvailable = true,
+            affiliateUrl = "https://shopee.com.br",
+            deepLinkUrl = "shopee://item/123"
+        )
+
+        val officialTrust = com.example.data.ai.SellerTrustEngine.evaluateSeller(officialProduct)
+        assertTrue("Official store must be verified", officialTrust.isVerified)
+        assertTrue("Trust score should be >= 90", officialTrust.trustScore >= 90)
+        assertEquals(com.example.data.model.SellerBadgeType.OFFICIAL, officialTrust.badgeType)
+        assertTrue(officialTrust.badgeText.contains("Loja Oficial"))
+
+        val verifiedMerchantProduct = com.example.data.model.Product(
+            id = "ali_choice_01",
+            store = com.example.data.model.StoreType.ALIEXPRESS,
+            title = "Fone Bluetooth Baseus Bowie M2s Cancelamento Ruído Choice",
+            imageUrl = "https://example.com/baseus.jpg",
+            originalPrice = 299.0,
+            promoPrice = 149.0,
+            discountPercentage = 50,
+            rating = 4.8,
+            salesCount = 2400,
+            freeShipping = true,
+            nationalSeller = false,
+            couponAvailable = true,
+            couponText = "Cupom Choice",
+            affiliateUrl = "https://aliexpress.com",
+            deepLinkUrl = "aliexpress://item/456"
+        )
+
+        val verifiedTrust = com.example.data.ai.SellerTrustEngine.evaluateSeller(verifiedMerchantProduct)
+        assertTrue("High volume merchant must be verified", verifiedTrust.isVerified)
+        assertTrue("Trust score should be >= 80", verifiedTrust.trustScore >= 80)
+
+        val poorSellerProduct = com.example.data.model.Product(
+            id = "shp_poor_01",
+            store = com.example.data.model.StoreType.SHOPEE,
+            title = "Produto Genérico Sem Marca",
+            imageUrl = "https://example.com/poor.jpg",
+            originalPrice = 100.0,
+            promoPrice = 90.0,
+            discountPercentage = 10,
+            rating = 3.6,
+            salesCount = 12,
+            freeShipping = false,
+            nationalSeller = false,
+            couponAvailable = false,
+            affiliateUrl = "https://shopee.com.br",
+            deepLinkUrl = "shopee://item/789"
+        )
+
+        val poorTrust = com.example.data.ai.SellerTrustEngine.evaluateSeller(poorSellerProduct)
+        assertFalse("Poor rated seller must not be verified", poorTrust.isVerified)
+        assertTrue("Poor trust score must be below 75", poorTrust.trustScore < 75)
+    }
 }
 

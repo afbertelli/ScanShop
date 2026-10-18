@@ -25,7 +25,12 @@ data class Product(
     val isSuperDeal: Boolean = discountPercentage >= 40,
     val isExactAiMatch: Boolean = false,
     val aiMatchBadge: String? = null,
-    val aiGender: String? = null
+    val aiGender: String? = null,
+    val technicalSpecs: ProductTechnicalSpecs? = null,
+    val aiMatchScore: Int = 90,
+    val aiConfidenceBadge: String? = null,
+    val sellerName: String? = null,
+    val sellerTrust: SellerTrustInfo? = null
 ) {
     val formattedPromoPrice: String
         get() = formatBrl(promoPrice)
@@ -48,7 +53,8 @@ data class ComparisonResult(
     val averageAliExpressPrice: Double = 0.0,
     val averageShopeePrice: Double = 0.0,
     val priceDeltaPercentage: Double = 0.0,
-    val aiInsight: AiSearchInsight? = null
+    val aiInsight: AiSearchInsight? = null,
+    val verifiedSellersCount: Int = 0
 ) {
     val unifiedSortedProducts: List<Product>
         get() = unifiedSorted

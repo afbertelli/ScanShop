@@ -11,6 +11,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import com.example.data.model.ProductTechnicalSpecs
+import com.example.data.model.SellerTrustInfo
 import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -18,6 +20,7 @@ import java.util.concurrent.TimeUnit
 data class AiSearchInsight(
     val detectedBrand: String? = null,
     val detectedModel: String? = null,
+    val detectedSubModel: String? = null,
     val category: String? = null,
     val categoryKey: String? = null,
     val targetGender: String? = null, // "Masculino", "Feminino", "Infantil", "Unissex"
@@ -27,7 +30,11 @@ data class AiSearchInsight(
     val optimizedQueries: List<String> = emptyList(),
     val summary: String? = null,
     val filteredAccessoriesCount: Int = 0,
-    val isAiEnhanced: Boolean = false
+    val isAiEnhanced: Boolean = false,
+    val technicalSpecs: ProductTechnicalSpecs? = null,
+    val autoCorrectedQuery: String? = null,
+    val didYouMean: String? = null,
+    val originalQuery: String? = null
 )
 
 data class ProductAiEvaluation(
@@ -40,11 +47,15 @@ data class ProductAiEvaluation(
     val genderMatched: Boolean = true,
     val itemTypeMatched: Boolean = true,
     val relevanceScore: Int = 0,
+    val matchScorePercent: Int = 90,
     val aiBrand: String? = null,
     val aiModel: String? = null,
     val aiGender: String? = null,
     val aiItemType: String? = null,
-    val badgeLabel: String? = null
+    val badgeLabel: String? = null,
+    val confidenceBadge: String? = null,
+    val technicalSpecs: ProductTechnicalSpecs? = null,
+    val sellerTrust: SellerTrustInfo? = null
 )
 
 /**
@@ -82,20 +93,28 @@ class AiSearchService {
         // Canonical Category Synonyms
         val CATEGORY_SYNONYMS: Map<String, Set<String>> = mapOf(
             // Hardware & Eletrônicos
-            "placa mae" to setOf("placa mae", "placamae", "motherboard", "mainboard", "mobo"),
-            "placa de video" to setOf("placa de video", "placadevideo", "gpu", "graphics card", "rtx", "gtx", "radeon", "geforce"),
-            "processador" to setOf("processador", "cpu", "ryzen", "core i3", "core i5", "core i7", "core i9", "xeon"),
-            "memoria ram" to setOf("memoria ram", "memoriaram", "ddr4", "ddr5", "ddr3", "ram"),
-            "fonte" to setOf("fonte", "fonte atx", "power supply", "psu"),
-            "gabinete" to setOf("gabinete", "case gamer"),
-            "ssd" to setOf("ssd", "nvme", "m.2 nvme", "disco solido"),
+            "placa mae" to setOf("placa mae", "placamae", "motherboard", "mainboard", "mobo", "kit x99", "kit xeon", "kit placa", "combo x99", "combo placa", "kit gamer x99"),
+            "placa de video" to setOf("placa de video", "placadevideo", "gpu", "graphics card", "rtx", "gtx", "rx", "radeon", "geforce"),
+            "processador" to setOf("processador", "cpu", "ryzen", "core i3", "core i5", "core i7", "core i9", "xeon", "intel core", "amd ryzen"),
+            "memoria ram" to setOf("memoria ram", "memoriaram", "ddr4", "ddr5", "ddr3", "ram", "dimm"),
+            "fonte" to setOf("fonte", "fonte atx", "power supply", "psu", "fonte gamer"),
+            "gabinete" to setOf("gabinete", "case gamer", "chassi gamer", "aquario"),
+            "ssd" to setOf("ssd", "nvme", "m.2 nvme", "disco solido", "ssd sata"),
+            "cooler" to setOf("cooler", "water cooler", "watercooler", "air cooler", "cooler cpu", "refrigeracao"),
+            "teclado" to setOf("teclado", "keyboard", "teclado mecanico", "teclado gamer", "teclado sem fio"),
+            "mouse" to setOf("mouse", "mouse gamer", "mouse sem fio", "mouse bluetooth"),
             "smartphone" to setOf("smartphone", "celular", "telefone", "galaxy", "iphone", "redmi", "poco", "moto g", "moto edge", "xiaomi", "zenfone", "s23", "s24", "s25", "a15", "a16", "a32", "a54", "a55"),
             "celular" to setOf("smartphone", "celular", "telefone", "galaxy", "iphone", "redmi", "poco", "moto g", "moto edge", "xiaomi", "zenfone", "s23", "s24", "s25", "a15", "a16", "a32", "a54", "a55"),
-            "smart tv" to setOf("smart tv", "smarttv", "smartv", "tv smart", "televisor", "tv led", "tv 4k", "televisao", "tv dled", "tv uhd", "roku tv", "google tv", "android tv", "tv 32", "tv 43", "tv 50", "tv 55", "tv 65", "crystal uhd", "qled", "oled", "tv"),
-            "tv" to setOf("smart tv", "smarttv", "smartv", "tv smart", "televisor", "tv led", "tv 4k", "televisao", "tv dled", "tv uhd", "roku tv", "google tv", "android tv", "tv 32", "tv 43", "tv 50", "tv 55", "tv 65", "crystal uhd", "qled", "oled", "tv"),
+            "smart tv" to setOf("smart tv", "smarttv", "smartv", "tv smart", "televisor", "tv led", "tv 4k", "televisao", "tv dled", "tv uhd", "roku tv", "google tv", "android tv", "tv 32", "tv 43", "tv 50", "tv 55", "tv 65", "crystal uhd", "qled", "oled", "tv", "tv monitor", "monitor tv"),
+            "tv" to setOf("smart tv", "smarttv", "smartv", "tv smart", "televisor", "tv led", "tv 4k", "televisao", "tv dled", "tv uhd", "roku tv", "google tv", "android tv", "tv 32", "tv 43", "tv 50", "tv 55", "tv 65", "crystal uhd", "qled", "oled", "tv", "tv monitor", "monitor tv"),
             "monitor" to setOf("monitor", "monitor pc", "monitor de pc", "monitor para pc", "monitor gamer", "monitor led", "monitor ips", "monitor full hd", "monitor 75hz", "monitor 144hz", "tela pc", "display pc", "widescreen", "ultrawide"),
-            "fone" to setOf("fone", "fones", "headset", "earphone", "earbuds", "headphone"),
-            "drone" to setOf("drone", "drones", "quadcopter"),
+            "fone" to setOf("fone", "fones", "headset", "earphone", "earbuds", "headphone", "airpods"),
+            "caixa de som" to setOf("caixa de som", "caixa bluetooth", "speaker", "alexa", "echo dot", "jbl flip", "jbl boombox", "soundbar"),
+            "projetor" to setOf("projetor", "mini projetor", "projetor 4k", "hy300", "hy320", "projector"),
+            "drone" to setOf("drone", "drones", "quadcopter", "mini drone"),
+            "tablet" to setOf("tablet", "ipad", "galaxy tab", "xiaomi pad", "pad"),
+            "tv box" to setOf("tv box", "tv stick", "fire stick", "fire tv", "chromecast", "mi tv stick"),
+            "camera" to setOf("camera", "camera ip", "camera wifi", "camera de seguranca", "camera fotografica"),
 
             // Calçados & Sapatos
             "tenis" to setOf("tenis", "sneaker", "sneakers", "sapatenis", "calcado", "calcados"),
@@ -122,7 +141,7 @@ class AiSearchService {
             "chapeu" to setOf("chapeu", "chapeus", "bucket hat", "gorro", "gorros", "touca", "toucas", "viseira", "boina"),
 
             // Acessórios Pessoais & Moda
-            "relogio" to setOf("relogio", "relogios", "smartwatch", "smart watch", "relogio digital", "relogio analogico"),
+            "relogio" to setOf("relogio", "relogios", "smartwatch", "smart watch", "relogio digital", "relogio analogico", "smartband", "band", "watch"),
             "oculos" to setOf("oculos", "oculos de sol", "oculos de grau", "armacao de oculos", "sunglasses"),
             "bolsa" to setOf("bolsa", "bolsas", "bolsa feminina", "bolsa transversal", "tiracolo", "clutch", "tote"),
             "mochila" to setOf("mochila", "mochilas", "mala", "mochila escolar", "pochete", "carteira"),
@@ -299,6 +318,42 @@ class AiSearchService {
                 aliases = setOf("apple", "iphone", "ipad", "macbook", "airpods"),
                 category = "Dispositivos Apple",
                 defaultPrefixes = listOf("Apple", "iPhone")
+            ),
+            "huawei" to BrandMeta(
+                displayName = "Huawei",
+                aliases = setOf("huawei", "watch gt", "watch fit", "band 8", "band 9", "band 10", "band 11", "huawei watch", "huawei band"),
+                category = "Smartwatches & Wearables Huawei",
+                defaultPrefixes = listOf("Smartwatch Huawei", "Huawei Band", "Huawei Watch", "Huawei")
+            ),
+            "jbl" to BrandMeta(
+                displayName = "JBL",
+                aliases = setOf("jbl", "tune", "wave", "flip", "charge", "boombox", "go 3", "go 4"),
+                category = "Fones & Caixas de Som JBL",
+                defaultPrefixes = listOf("Fone JBL", "Caixa de Som JBL", "JBL")
+            ),
+            "sony" to BrandMeta(
+                displayName = "Sony",
+                aliases = setOf("sony", "playstation", "ps5", "ps4", "bravia", "wh-1000xm", "wf-1000xm"),
+                category = "Eletrônicos & Áudio Sony",
+                defaultPrefixes = listOf("Sony", "PlayStation")
+            ),
+            "amazfit" to BrandMeta(
+                displayName = "Amazfit",
+                aliases = setOf("amazfit", "gts", "gtr", "bip", "t-rex", "active", "balance"),
+                category = "Smartwatches Amazfit",
+                defaultPrefixes = listOf("Smartwatch Amazfit", "Amazfit")
+            ),
+            "garmin" to BrandMeta(
+                displayName = "Garmin",
+                aliases = setOf("garmin", "forerunner", "fenix", "instinct", "venu"),
+                category = "Smartwatches Garmin",
+                defaultPrefixes = listOf("Smartwatch Garmin", "Garmin")
+            ),
+            "lenovo" to BrandMeta(
+                displayName = "Lenovo",
+                aliases = setOf("lenovo", "ideapad", "thinkpad", "legion", "thinkbook"),
+                category = "Notebooks & Fones Lenovo",
+                defaultPrefixes = listOf("Notebook Lenovo", "Fone Lenovo", "Lenovo")
             ),
             "dji" to BrandMeta(
                 displayName = "DJI",
@@ -702,19 +757,23 @@ class AiSearchService {
                     normTitle.contains("motherboard")
 
             if (isMotherboardContext) {
-                // Guarda de Preço: Placa-mãe funcional nunca custa menos de R$ 65,00
-                if (price in 0.01..65.0) return true
+                // Guarda de Preço: Placa-mãe ou kit funcional nunca custa menos de R$ 130,00
+                if (price in 0.01..130.0) return true
 
                 val criticalMotherboardAccessories = listOf(
-                    "espelho", "espelhos", "io shield", "i o shield", "shield", "shields", "baffle", "blende",
+                    "espelho", "espelhos", "io shield", "i o shield", "i/o shield", "shield", "shields", "baffle", "blende",
                     "modulo tpm", "tpm 2.0", "tpm2.0", "tpm", "chip tpm", "tpm pin", "lpc pin", "tpm header",
                     "antena wifi", "antena wi fi", "antena", "antenna",
-                    "adesivo", "etiqueta", "badge", "sticker", "logo", "logotipo", "emblema",
+                    "adesivo", "etiqueta", "badge", "sticker", "logo", "logotipo", "emblema", "cracha", "crachá",
                     "bateria cmos", "bateria rtc", "cr2032",
                     "suporte lga", "bracket", "backplate", "suporte am4", "suporte am5", "trava cpu",
+                    "suporte cooler", "suporte de montagem", "radiador e backplane", "acessorios diy", "1 conjunto de acessorios",
                     "parafuso", "parafusos", "parafuso m.2", "parafusos m.2", "standoff",
                     "dissipador", "dissipador m.2", "thermal pad", "pasta termica", "heatsink",
                     "cabo sata", "cabo rgb", "splitter", "divisor rgb", "fita led", "rgb strip",
+                    "rack de chassi", "suporte de placa principal", "chassi de estudio", "bancada",
+                    "placa traseira io", "placa traseira", "controle remoto", "tv box",
+                    "cosplay", "acrilico", "etb", "camada estendida", "placas vidro", "jogo de terror",
                     // Falsos positivos decorativos
                     "dia das maes", "dia da maes", "mae de deus", "mae do mar", "maternidade",
                     "quadro decorativo", "placa decorativa", "placa mdf", "mdf", "enfeite", "guirlanda",
@@ -725,7 +784,26 @@ class AiSearchService {
                     val r = Regex("\\b${Regex.escape(term)}\\b", RegexOption.IGNORE_CASE)
                     r.containsMatchIn(normTitle) || normTitle.contains(term)
                 }) {
-                    return true
+                    // Se for kit oficial ou combo de placa-mãe, não descarta por conter pasta térmica ou cabo sata listado nos componentes inclusos
+                    val isMotherboardKit = (normTitle.contains("kit") || normTitle.contains("combo")) &&
+                            (normTitle.contains("placa mae") || normTitle.contains("motherboard") || normTitle.contains("x99"))
+                    val isHarmlessInKit = (normTitle.contains("pasta termica") || normTitle.contains("cabo sata") || normTitle.contains("pilha")) &&
+                            !normTitle.contains("tpm") && !normTitle.contains("shield") && !normTitle.contains("suporte cooler")
+                    if (!isMotherboardKit || !isHarmlessInKit) {
+                        return true
+                    }
+                }
+
+                // Componentes avulsos que não são placas-mãe (ex: apenas memória RAM avulsa, apenas CPU avulsa, apenas cooler)
+                if (!normTitle.contains("kit") && !normTitle.contains("combo") && !normTitle.contains("placa mae") && !normTitle.contains("motherboard")) {
+                    val standaloneNonMoboParts = listOf(
+                        "cpu xeon", "processador intel", "processador amd", "cooler para processador",
+                        "air cooler", "water cooler", "cooler da cpu", "cooler de cpu",
+                        "memoria ram", "memória ram", "kingston hyperx fury", "kingston fury"
+                    )
+                    if (standaloneNonMoboParts.any { normTitle.contains(it) }) {
+                        return true
+                    }
                 }
             }
 
@@ -791,17 +869,23 @@ class AiSearchService {
             }
 
             // 5. Contexto de Relógios & Smartwatches
-            val isWatchContext = categoryKey == "relogio" || normTitle.contains("relogio") || normTitle.contains("smartwatch")
+            val isWatchContext = categoryKey == "relogio" || normTitle.contains("relogio") || normTitle.contains("smartwatch") || normTitle.contains("smart watch") || normTitle.contains("smartband")
             if (isWatchContext) {
+                // Guarda de Preço: Smartwatch funcional novo nunca custa menos de R$ 45,00
+                if (price in 0.01..45.0) return true
+
                 val watchAccessories = listOf(
-                    "pulseira para relogio", "pulseira de relogio", "pulseira compativel", "pulseira silicone",
-                    "pelicula para relogio", "pelicula relogio", "capa protetora relogio", "carregador relogio",
-                    "cabo carregador smartwatch", "caixa vazia"
+                    "pulseira", "bracelete", "correia", "silicone para", "pelicula", "hidrogel", "vidro temperado",
+                    "anti-risco", "anti risco", "protetor de tela", "capa protetora", "case protetora", "bumper",
+                    "carregador", "cabo carregador", "dock", "base de carregamento", "adaptador de carregamento",
+                    "tela amoled para", "display amoled", "display touch", "tela touch", "substituicao", "peca de reposicao",
+                    "peca sobressalente", "tampa traseira", "anel de borracha", "anel de vedacao", "fecho", "caixa vazia",
+                    "placa-mae para", "placa mae para", "buzzer", "alto-falante para", "suporte de carregamento",
+                    "protecao para tela", "pelicula protetora", "estacao de carregamento", "cabo flexivel",
+                    "botao de alimentacao", "substituicao do ecra", "ecra tatil", "ecra", "reparar", "conserto",
+                    "peca de reparo", "tela de toque", "painel de toque", "adaptador para", "1pair", "2pcs"
                 )
-                if (watchAccessories.any { acc ->
-                    val r = Regex("\\b${Regex.escape(acc)}\\b", RegexOption.IGNORE_CASE)
-                    r.containsMatchIn(normTitle) || normTitle.contains(acc)
-                }) {
+                if (watchAccessories.any { acc -> normTitle.contains(acc) }) {
                     return true
                 }
             }
@@ -832,16 +916,19 @@ class AiSearchService {
                 // Guarda de Preço: TV funcional nunca custa menos de R$ 350,00
                 if (price in 0.01..350.0) return true
 
+                // Rejeita capas de telefone e periféricos móveis falsos
+                if (normTitle.contains("capa") || normTitle.contains("case") || normTitle.contains("galaxy s") || normTitle.contains("iphone")) {
+                    return true
+                }
+
                 val tvAccessories = listOf(
                     "suporte para tv", "suporte de tv", "suporte articulado", "suporte fixo", "suporte parede",
-                    "suporte universal", "controle remoto", "controle universal", "placa t-con", "placa t con",
-                    "barra de led", "barras de led", "fita led para tv", "cabo de forca", "conversor digital",
-                    "antena digital", "painel para tv", "rack para tv", "capa para tv"
+                    "suporte universal", "suporte tv", "suporte", "controle remoto", "controle universal", "controle smart",
+                    "placa t-con", "placa t con", "placa principal", "placa fonte", "barra de led", "barras de led",
+                    "fita led para tv", "cabo de forca", "conversor digital", "antena digital", "painel para tv",
+                    "rack para tv", "capa para tv", "cabo hdmi", "cabo optico", "cabo de conexao", "one connect"
                 )
-                if (tvAccessories.any { acc ->
-                    val r = Regex("\\b${Regex.escape(acc)}\\b", RegexOption.IGNORE_CASE)
-                    r.containsMatchIn(normTitle) || normTitle.contains(acc)
-                }) {
+                if (tvAccessories.any { acc -> normTitle.contains(acc) }) {
                     return true
                 }
             }
@@ -893,13 +980,108 @@ class AiSearchService {
                 }
             }
 
-            // 10. Primeira palavra é claramente um acessório periférico
+            // 10. Contexto de Placas de Vídeo (GPU)
+            val isGpuContext = categoryKey in listOf("placa de video", "gpu") ||
+                    normTitle.contains("placa de video") || normTitle.contains("rtx") || normTitle.contains("gtx") || normTitle.contains("radeon")
+            if (isGpuContext) {
+                // Guarda de Preço: GPU funcional nunca custa menos de R$ 250,00
+                if (price in 0.01..250.0) return true
+                val gpuAccessories = listOf(
+                    "suporte gpu", "suporte de placa de video", "cabo riser", "ventoinha", "ventilador",
+                    "fan para", "backplate", "espelho", "pasta termica", "capa tampa", "placa decorativa",
+                    "suporte acrilico", "suporte rgb", "adaptador pcie", "cabo 8 pinos"
+                )
+                if (gpuAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 11. Contexto de Processadores (CPU)
+            val isCpuContext = categoryKey in listOf("processador", "cpu") ||
+                    normTitle.contains("processador") || normTitle.contains("ryzen") || normTitle.contains("core i")
+            if (isCpuContext) {
+                if (price in 0.01..75.0) return true
+                val cpuAccessories = listOf(
+                    "cooler para", "air cooler", "water cooler", "bracket", "suporte cooler", "pasta termica",
+                    "adesivo intel", "adesivo amd", "chaveiro cpu", "trava cpu"
+                )
+                if (cpuAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 12. Contexto de Memória RAM
+            val isRamContext = categoryKey == "memoria ram" || normTitle.contains("memoria ram") || normTitle.contains("ram ddr")
+            if (isRamContext) {
+                if (price in 0.01..35.0) return true
+                val ramAccessories = listOf("dissipador para ram", "dissipador de memoria", "case memoria", "iluminacao rgb para ram")
+                if (ramAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 13. Contexto de SSD e Armazenamento
+            val isSsdContext = categoryKey == "ssd" || normTitle.contains("ssd") || normTitle.contains("nvme") || normTitle.contains("m.2")
+            if (isSsdContext) {
+                if (price in 0.01..45.0) return true
+                val ssdAccessories = listOf(
+                    "dissipador m.2", "dissipador ssd", "case para ssd", "case nvme", "gaveta para hd",
+                    "cabo sata", "adaptador pcie m.2", "parafuso m.2", "enclosure nvme"
+                )
+                if (ssdAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 14. Contexto de Fonte ATX
+            val isPsuContext = categoryKey == "fonte" || normTitle.contains("fonte atx") || normTitle.contains("fonte gamer")
+            if (isPsuContext) {
+                if (price in 0.01..90.0) return true
+                val psuAccessories = listOf("cabo de forca", "cabo extensor", "cabo sleeve", "testador de fonte", "adaptador 24 pinos")
+                if (psuAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 15. Contexto de Periféricos (Teclado & Mouse)
+            if (categoryKey == "teclado" || normTitle.contains("teclado")) {
+                if (price in 0.01..50.0) return true
+                val kbAccessories = listOf("keycap", "keycaps", "switch", "switches", "puxador de switch", "lubrificante", "cabo espiral", "descanso de pulso")
+                if (kbAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+            if (categoryKey == "mouse" || normTitle.contains("mouse")) {
+                if (price in 0.01..35.0) return true
+                val mouseAccessories = listOf("mousepad", "mouse pad", "grip tape", "skates", "pezinho", "case para mouse")
+                if (mouseAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 16. Contexto de Áudio & Fones & Caixas de Som
+            if (categoryKey == "fone" || normTitle.contains("fone") || normTitle.contains("headset")) {
+                if (price in 0.01..25.0) return true
+                val audioAccessories = listOf("almofada", "cabo avulso", "case para fone", "capinha para fone", "borrachinha", "tiara", "espuma para fone")
+                if (audioAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+            if (categoryKey == "caixa de som" || normTitle.contains("caixa de som") || normTitle.contains("speaker")) {
+                if (price in 0.01..40.0) return true
+                val speakerAccessories = listOf("capa de silicone", "case de transporte", "suporte de parede", "alca para caixa")
+                if (speakerAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 17. Contexto de Drones, Projetores e Tablets
+            if (categoryKey == "drone" || normTitle.contains("drone")) {
+                if (price in 0.01..70.0) return true
+                val droneAccessories = listOf("helice", "helices", "protetor de helice", "bateria para drone", "bolsa para drone", "braco do drone")
+                if (droneAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+            if (categoryKey == "projetor" || normTitle.contains("projetor")) {
+                if (price in 0.01..160.0) return true
+                val projAccessories = listOf("tripe para projetor", "suporte de teto", "tela de projecao", "bolsa para projetor", "controle remoto para projetor")
+                if (projAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+            if (categoryKey == "tablet" || normTitle.contains("tablet") || normTitle.contains("ipad")) {
+                if (price in 0.01..200.0) return true
+                val tabletAccessories = listOf("capa para tablet", "capa ipad", "pelicula tablet", "caneta touch avulsa", "teclado para tablet")
+                if (tabletAccessories.any { acc -> normTitle.contains(acc) }) return true
+            }
+
+            // 18. Primeira palavra é claramente um acessório periférico
             val firstWords = normTitle.split("\\s+".toRegex()).take(3).joinToString(" ")
             val leadingAccWords = listOf(
                 "espelho", "modulo", "suporte", "cabo", "case", "capa", "antena", "parafuso",
                 "adesivo", "bateria", "peca", "pecas", "cadarco", "palmilha", "cabide", "pulseira",
                 "controle", "fita led", "barra led", "luminaria", "braco", "prateleira", "pelicula",
-                "carregador", "microfone", "tripe"
+                "carregador", "microfone", "tripe", "keycap", "keycaps", "switch", "switches",
+                "dissipador", "bracket", "almofada", "mousepad", "helice", "helices", "ventoinha", "ventilador"
             )
             if (leadingAccWords.any { acc ->
                 val r = Regex("\\b${Regex.escape(acc)}\\b", RegexOption.IGNORE_CASE)
@@ -908,18 +1090,65 @@ class AiSearchService {
                 return true
             }
 
-            // 11. Estrutura gramatical de acessório ("<termo> para placa", "<termo> para bone", etc.)
-            val connectors = listOf(" para ", " p ", " compativel com ", " for ")
+            // 19. Estrutura gramatical de acessório e compatibilidade
+            val connectors = listOf(
+                " para ", " p/ ", " compativel com ", " compativel p/ ", " for ",
+                " adequado para ", " adequada para "
+            )
             for (conn in connectors) {
                 if (normTitle.contains(conn)) {
-                    val prefix = normTitle.substringBefore(conn)
-                    if (leadingAccWords.any { acc -> prefix.contains(acc) }) {
+                    val prefix = normTitle.substringBefore(conn).trim()
+                    if (leadingAccWords.any { acc -> prefix.contains(acc) } || prefix.length < 3) {
                         return true
                     }
                 }
             }
 
             return false
+        }
+
+        val COMMON_TYPOS: Map<String, String> = mapOf(
+            // Marcas
+            "samung" to "samsung", "samsug" to "samsung", "sansung" to "samsung", "samnsung" to "samsung",
+            "aple" to "apple", "appel" to "apple", "aplle" to "apple",
+            "xiomi" to "xiaomi", "xiami" to "xiaomi", "xiaomy" to "xiaomi", "xaomi" to "xiaomi",
+            "machinisti" to "machinist", "machiniste" to "machinist", "maxinist" to "machinist",
+            "huanazi" to "huananzhi", "huanan" to "huananzhi",
+            "motora" to "motorola", "motorla" to "motorola", "motog" to "moto g",
+            "lenov" to "lenovo", "lenolvo" to "lenovo",
+            "asuss" to "asus", "azus" to "asus",
+            "gigabite" to "gigabyte",
+            "kingston" to "kingston", "kinstom" to "kingston",
+            // Hardware & Categorias
+            "smarthone" to "smartphone", "smartfone" to "smartphone", "celula" to "celular",
+            "placamae" to "placa mae", "placa-mae" to "placa mae",
+            "smartv" to "smart tv", "smarttv" to "smart tv",
+            "fonedeouvido" to "fone de ouvido", "hedset" to "headset", "headfone" to "headphone",
+            "notbook" to "notebook", "notebuk" to "notebook",
+            "smartwach" to "smartwatch",
+            "snickers" to "tenis", "sneackers" to "sneakers",
+            "chutera" to "chuteira",
+            "x-99" to "x99", "kitx99" to "kit x99", "x-79" to "x79",
+            "mr9apro" to "mr9a pro", "mr9-pro" to "mr9a pro",
+            "rtx4060" to "rtx 4060", "gtx1660" to "gtx 1660", "rx580" to "rx 580",
+            "corei5" to "core i5", "corei7" to "core i7", "ryzen5" to "ryzen 5", "ryzen7" to "ryzen 7"
+        )
+
+        fun correctQueryTypos(query: String): Pair<String, Boolean> {
+            val tokens = query.split("\\s+".toRegex())
+            var modified = false
+            val corrected = tokens.map { token ->
+                val lower = token.lowercase(Locale.ROOT)
+                val replace = COMMON_TYPOS[lower]
+                if (replace != null) {
+                    modified = true
+                    replace
+                } else {
+                    token
+                }
+            }.joinToString(" ")
+
+            return Pair(corrected, modified)
         }
     }
 
@@ -1096,7 +1325,9 @@ class AiSearchService {
      * - Gera variantes de alta conversão para Shopee e AliExpress
      */
     fun analyzeLocal(query: String): AiSearchInsight {
-        val normalized = normalizeText(query)
+        val (correctedQuery, wasCorrected) = correctQueryTypos(query)
+        val activeQuery = if (wasCorrected) correctedQuery else query
+        val normalized = normalizeText(activeQuery)
         val tokens = normalized.split("\\s+".toRegex()).filter { it.isNotBlank() }
 
         // 1. Detecta intenção de acessório
@@ -1375,9 +1606,17 @@ class AiSearchService {
                 optimizedQueries.add("$foundBrandKey $detectedModel")
             }
         } else if (detectedCategoryKey == "placa mae") {
-            optimizedQueries.add("placa-mãe")
-            optimizedQueries.add("motherboard")
-            optimizedQueries.add("kit placa mae")
+            if (detectedModel != null) {
+                optimizedQueries.add("placa mae $detectedModel")
+                optimizedQueries.add("placa-mãe $detectedModel")
+                optimizedQueries.add("kit $detectedModel")
+                optimizedQueries.add("kit placa mae $detectedModel")
+                optimizedQueries.add("$detectedModel motherboard")
+            } else {
+                optimizedQueries.add("placa-mãe")
+                optimizedQueries.add("motherboard")
+                optimizedQueries.add("kit placa mae")
+            }
         }
 
         // Expansão específica para Moda / Calçados / Bonés com Gênero
@@ -1449,9 +1688,24 @@ class AiSearchService {
             }
         }
 
+        val neuralSpecs = NeuralSpecEngine.extractSpecsFromQuery(query)
+        val finalBrand = detectedBrand ?: neuralSpecs.brand?.takeIf { it != "Oficial" }
+        val finalModel = detectedModel ?: neuralSpecs.model
+
+        val finalSummary = when {
+            neuralSpecs.subModelOrPartNumber != null && finalBrand != null -> {
+                "IA Neural: $finalBrand $finalModel [${neuralSpecs.subModelOrPartNumber}]"
+            }
+            neuralSpecs.subModelOrPartNumber != null -> {
+                "IA Neural: $finalModel [${neuralSpecs.subModelOrPartNumber}]"
+            }
+            else -> summary
+        }
+
         return AiSearchInsight(
-            detectedBrand = detectedBrand,
-            detectedModel = detectedModel,
+            detectedBrand = finalBrand,
+            detectedModel = finalModel,
+            detectedSubModel = neuralSpecs.subModelOrPartNumber,
             category = categoryDisplay,
             categoryKey = detectedCategoryKey,
             targetGender = targetGender,
@@ -1459,8 +1713,12 @@ class AiSearchService {
             isAccessoryIntent = isAccessory,
             brandAliases = foundBrandMeta?.aliases ?: emptySet(),
             optimizedQueries = optimizedQueries.distinct(),
-            summary = summary,
-            isAiEnhanced = false
+            summary = finalSummary,
+            isAiEnhanced = false,
+            technicalSpecs = neuralSpecs,
+            autoCorrectedQuery = if (wasCorrected) correctedQuery else null,
+            originalQuery = query,
+            didYouMean = if (wasCorrected) "Buscando por: \"$correctedQuery\"" else null
         )
     }
 
@@ -1527,7 +1785,7 @@ class AiSearchService {
             }
         }
 
-        // 4. Validação da Marca
+        // 4. Validação da Marca e Submodelo
         var brandMatched = false
         var identifiedBrand: String? = null
         if (insight.brandAliases.isNotEmpty()) {
@@ -1535,6 +1793,15 @@ class AiSearchService {
                 val r = Regex("\\b${Regex.escape(alias)}\\b", RegexOption.IGNORE_CASE)
                 r.containsMatchIn(normTitle) || normTitle.contains(alias)
             }
+            val hasSubmodel = !insight.detectedSubModel.isNullOrBlank() &&
+                    normTitle.contains(normalizeText(insight.detectedSubModel))
+            val hasHardwareModel = !insight.detectedModel.isNullOrBlank() &&
+                    normTitle.contains(normalizeText(insight.detectedModel))
+
+            if (!brandMatched && (hasSubmodel || hasHardwareModel)) {
+                brandMatched = true
+            }
+
             if (!brandMatched) {
                 return ProductAiEvaluation(
                     isGenuineMatch = false,
@@ -1610,6 +1877,22 @@ class AiSearchService {
             else -> "✨ IA Match"
         }
 
+        val productSpecs = product.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(
+            title = product.title,
+            price = product.promoPrice,
+            referenceQuerySpecs = insight.technicalSpecs
+        )
+
+        val matchPercent = ((score.toDouble() / 190.0) * 100).toInt().coerceIn(78, 99)
+        val confidence = when {
+            matchPercent >= 96 -> "🎯 $matchPercent% Match Perfeito"
+            matchPercent >= 90 -> "✨ $matchPercent% Match IA"
+            matchPercent >= 85 -> "⚡ $matchPercent% Alta Compatibilidade"
+            else -> "👍 $matchPercent% Compatível"
+        }
+
+        val sellerTrust = product.sellerTrust ?: SellerTrustEngine.evaluateSeller(product, insight.originalQuery)
+
         return ProductAiEvaluation(
             isGenuineMatch = score >= 90,
             isAccessoryOrPart = false,
@@ -1620,11 +1903,15 @@ class AiSearchService {
             genderMatched = genderMatched,
             itemTypeMatched = itemTypeMatched,
             relevanceScore = score.coerceIn(0, 160),
+            matchScorePercent = matchPercent,
             aiBrand = identifiedBrand,
             aiModel = identifiedModel,
             aiGender = productGender ?: insight.targetGender,
             aiItemType = productItemType ?: insight.detectedItemType,
-            badgeLabel = badge
+            badgeLabel = badge,
+            confidenceBadge = confidence,
+            technicalSpecs = productSpecs,
+            sellerTrust = sellerTrust
         )
     }
 
@@ -1721,41 +2008,99 @@ class AiSearchService {
             analyzeLocal(query)
         }
 
+        val hasSpecificTarget = insight.detectedBrand != null || insight.categoryKey != null || insight.detectedModel != null
+
         var filteredAccessories = 0
         val refinedAli = baseResult.aliExpressProducts.mapNotNull { prod ->
             val eval = evaluateProduct(prod, insight)
-            if (eval.isAccessoryOrPart || eval.isGenderConflict) {
+            val brandMismatch = insight.detectedBrand != null && !eval.brandMatched
+            val categoryMismatch = insight.categoryKey != null && !eval.categoryMatched
+            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch) {
                 filteredAccessories++
                 null
             } else {
+                val trust = eval.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
                 prod.copy(
                     isExactAiMatch = eval.isGenuineMatch,
                     aiMatchBadge = eval.badgeLabel,
-                    aiGender = eval.aiGender
+                    aiGender = eval.aiGender,
+                    technicalSpecs = eval.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
+                    aiMatchScore = eval.matchScorePercent,
+                    aiConfidenceBadge = eval.confidenceBadge,
+                    sellerTrust = trust
                 )
             }
         }
 
         val refinedShopee = baseResult.shopeeProducts.mapNotNull { prod ->
             val eval = evaluateProduct(prod, insight)
-            if (eval.isAccessoryOrPart || eval.isGenderConflict) {
+            val brandMismatch = insight.detectedBrand != null && !eval.brandMatched
+            val categoryMismatch = insight.categoryKey != null && !eval.categoryMatched
+            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch) {
                 filteredAccessories++
                 null
             } else {
+                val trust = eval.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
                 prod.copy(
                     isExactAiMatch = eval.isGenuineMatch,
                     aiMatchBadge = eval.badgeLabel,
-                    aiGender = eval.aiGender
+                    aiGender = eval.aiGender,
+                    technicalSpecs = eval.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
+                    aiMatchScore = eval.matchScorePercent,
+                    aiConfidenceBadge = eval.confidenceBadge,
+                    sellerTrust = trust
                 )
             }
         }
 
         val updatedInsight = insight.copy(filteredAccessoriesCount = filteredAccessories)
 
-        val finalAli = if (refinedAli.isNotEmpty()) refinedAli else baseResult.aliExpressProducts
-        val finalShopee = if (refinedShopee.isNotEmpty()) refinedShopee else baseResult.shopeeProducts
-        val combined = (finalAli + finalShopee).sortedBy { it.promoPrice }
-        val winner = combined.minByOrNull { it.promoPrice }
+        val finalAli = if (refinedAli.isNotEmpty()) {
+            refinedAli.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        } else {
+            baseResult.aliExpressProducts.filter { prod ->
+                val eval = evaluateProduct(prod, insight)
+                !eval.isAccessoryOrPart && !eval.isGenderConflict && (insight.categoryKey == null || eval.categoryMatched)
+            }.ifEmpty {
+                baseResult.aliExpressProducts.filter { prod ->
+                    !isAccessoryOrPart(prod.title, prod.promoPrice, insight.categoryKey, insight.isAccessoryIntent)
+                }
+            }.map { prod ->
+                val trust = prod.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
+                prod.copy(
+                    technicalSpecs = prod.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
+                    aiMatchScore = 88,
+                    aiConfidenceBadge = "⚡ 88% Match",
+                    sellerTrust = trust
+                )
+            }.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        }
+
+        val finalShopee = if (refinedShopee.isNotEmpty()) {
+            refinedShopee.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        } else {
+            baseResult.shopeeProducts.filter { prod ->
+                val eval = evaluateProduct(prod, insight)
+                !eval.isAccessoryOrPart && !eval.isGenderConflict && (insight.categoryKey == null || eval.categoryMatched)
+            }.ifEmpty {
+                baseResult.shopeeProducts.filter { prod ->
+                    !isAccessoryOrPart(prod.title, prod.promoPrice, insight.categoryKey, insight.isAccessoryIntent)
+                }
+            }.map { prod ->
+                val trust = prod.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
+                prod.copy(
+                    technicalSpecs = prod.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
+                    aiMatchScore = 88,
+                    aiConfidenceBadge = "⚡ 88% Match",
+                    sellerTrust = trust
+                )
+            }.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        }
+
+        val combined = (finalAli + finalShopee).sortedWith(
+            compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice }
+        )
+        val winner = combined.firstOrNull { it.isExactAiMatch } ?: combined.minByOrNull { it.promoPrice }
 
         val avgAli = if (finalAli.isNotEmpty()) finalAli.map { it.promoPrice }.average() else 0.0
         val avgShp = if (finalShopee.isNotEmpty()) finalShopee.map { it.promoPrice }.average() else 0.0
@@ -1765,15 +2110,18 @@ class AiSearchService {
             ((diff / higher) * 100).toInt().toDouble()
         } else 0.0
 
+        val verifiedCount = (finalAli + finalShopee).count { it.sellerTrust?.isVerified == true }
+
         baseResult.copy(
             aliExpressProducts = finalAli,
             shopeeProducts = finalShopee,
-            unifiedSorted = if (combined.isNotEmpty()) combined else baseResult.unifiedSorted,
-            winnerProduct = winner ?: baseResult.winnerProduct,
-            averageAliExpressPrice = if (avgAli > 0) avgAli else baseResult.averageAliExpressPrice,
-            averageShopeePrice = if (avgShp > 0) avgShp else baseResult.averageShopeePrice,
-            priceDeltaPercentage = if (delta > 0) delta else baseResult.priceDeltaPercentage,
-            aiInsight = updatedInsight
+            unifiedSorted = combined,
+            winnerProduct = winner,
+            averageAliExpressPrice = avgAli,
+            averageShopeePrice = avgShp,
+            priceDeltaPercentage = delta,
+            aiInsight = updatedInsight,
+            verifiedSellersCount = verifiedCount
         )
     }
 }

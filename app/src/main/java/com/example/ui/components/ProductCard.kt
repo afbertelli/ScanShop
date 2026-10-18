@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.TrendingDown
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -42,6 +44,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -114,6 +120,22 @@ fun CompactProductCard(
 ) {
     val context = LocalContext.current
     val storeColor = if (product.store == StoreType.ALIEXPRESS) AliExpressRed else ShopeeOrange
+    var showSpecsSheet by rememberSaveable { mutableStateOf(false) }
+    var showSellerTrustSheet by rememberSaveable { mutableStateOf(false) }
+
+    if (showSpecsSheet) {
+        TechnicalSpecsSheet(
+            product = product,
+            onDismiss = { showSpecsSheet = false }
+        )
+    }
+
+    if (showSellerTrustSheet) {
+        SellerTrustSheet(
+            product = product,
+            onDismiss = { showSellerTrustSheet = false }
+        )
+    }
 
     Card(
         modifier = modifier
@@ -256,22 +278,31 @@ fun CompactProductCard(
                 Spacer(modifier = Modifier.height(3.dp))
 
                 // Tags Slot - Frete Grátis & Brasil (natural height without clipping)
-                if (product.freeShipping || product.nationalSeller || product.isExactAiMatch) {
+                if (product.freeShipping || product.nationalSeller || product.isExactAiMatch || product.sellerTrust != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(3.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        if (product.isExactAiMatch) {
+                        product.sellerTrust?.let { trust ->
+                            VerifiedSellerBadge(
+                                sellerTrust = trust,
+                                compact = true,
+                                onClick = { showSellerTrustSheet = true }
+                            )
+                        }
+                        val badgeLabel = product.aiConfidenceBadge ?: product.aiMatchBadge ?: (if (product.isExactAiMatch) "✨ ${product.aiMatchScore}% Match" else null)
+                        if (badgeLabel != null) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(3.dp))
-                                    .background(Color(0xFFF3E8FF))
+                                    .background(if (product.isExactAiMatch) Color(0xFFF3E8FF) else Color(0xFFF1F5F9))
+                                    .border(BorderStroke(0.5.dp, if (product.isExactAiMatch) Color(0xFFD8B4FE) else Color(0xFFCBD5E1)), RoundedCornerShape(3.dp))
                                     .padding(horizontal = 3.dp, vertical = 1.dp)
                             ) {
                                 Text(
-                                    text = product.aiMatchBadge ?: "✨ IA Match",
-                                    color = Color(0xFF7E22CE),
+                                    text = badgeLabel,
+                                    color = if (product.isExactAiMatch) Color(0xFF7E22CE) else Color(0xFF334155),
                                     fontSize = 8.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
@@ -336,6 +367,23 @@ fun CompactProductCard(
                                 )
                             }
                         }
+                        product.technicalSpecs?.keyHighlightChips?.firstOrNull()?.let { topChip ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color(0xFFEEF2FF))
+                                    .padding(horizontal = 3.dp, vertical = 1.dp)
+                            ) {
+                                Text(
+                                    text = "⚡ $topChip",
+                                    color = Color(0xFF3730A3),
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
+                        }
                     }
                     Spacer(modifier = Modifier.height(3.dp))
                 }
@@ -379,15 +427,33 @@ fun CompactProductCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.weight(1f))
+                    product.sellerTrust?.takeIf { it.isVerified }?.let { trust ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color(0xFFECFDF5))
+                                .border(BorderStroke(0.5.dp, Color(0xFFA7F3D0)), RoundedCornerShape(3.dp))
+                                .clickable { showSellerTrustSheet = true }
+                                .padding(horizontal = 3.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                text = "🛡️ ${trust.trustScore}%",
+                                color = Color(0xFF047857),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
 
                 // Push CTA button to the bottom of the card
                 Spacer(modifier = Modifier.weight(1f, fill = true))
 
-                // CTA Row - "Ir à Loja" + "Compartilhar"
+                // CTA Row - "Ir à Loja" + "Vendedor" + "Ficha Técnica" + "Compartilhar"
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(
@@ -416,6 +482,42 @@ fun CompactProductCard(
                             contentDescription = null,
                             modifier = Modifier.size(11.dp),
                             tint = Color.White
+                        )
+                    }
+
+                    if (product.sellerTrust != null) {
+                        IconButton(
+                            onClick = { showSellerTrustSheet = true },
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (product.sellerTrust.isVerified) Color(0xFFECFDF5) else Color(0xFFF1F5F9))
+                                .border(BorderStroke(0.5.dp, if (product.sellerTrust.isVerified) Color(0xFFA7F3D0) else Color(0xFFCBD5E1)), RoundedCornerShape(6.dp))
+                                .testTag("btn_seller_trust_${product.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.VerifiedUser,
+                                contentDescription = "Confiabilidade do Vendedor",
+                                tint = if (product.sellerTrust.isVerified) Color(0xFF047857) else Color(0xFF475569),
+                                modifier = Modifier.size(13.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { showSpecsSheet = true },
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFEEF2FF))
+                            .border(BorderStroke(0.5.dp, Color(0xFFC7D2FE)), RoundedCornerShape(6.dp))
+                            .testTag("btn_specs_${product.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = "Ficha Técnica Neural",
+                            tint = Color(0xFF4F46E5),
+                            modifier = Modifier.size(13.dp)
                         )
                     }
 
@@ -452,6 +554,22 @@ fun UnifiedProductCard(
 ) {
     val context = LocalContext.current
     val storeColor = if (product.store == StoreType.ALIEXPRESS) AliExpressRed else ShopeeOrange
+    var showSpecsSheet by rememberSaveable { mutableStateOf(false) }
+    var showSellerTrustSheet by rememberSaveable { mutableStateOf(false) }
+
+    if (showSpecsSheet) {
+        TechnicalSpecsSheet(
+            product = product,
+            onDismiss = { showSpecsSheet = false }
+        )
+    }
+
+    if (showSellerTrustSheet) {
+        SellerTrustSheet(
+            product = product,
+            onDismiss = { showSellerTrustSheet = false }
+        )
+    }
 
     Card(
         modifier = modifier
@@ -593,16 +711,25 @@ fun UnifiedProductCard(
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            if (product.isExactAiMatch) {
+                            product.sellerTrust?.let { trust ->
+                                VerifiedSellerBadge(
+                                    sellerTrust = trust,
+                                    compact = true,
+                                    onClick = { showSellerTrustSheet = true }
+                                )
+                            }
+                            val badgeLabel = product.aiConfidenceBadge ?: product.aiMatchBadge ?: (if (product.isExactAiMatch) "✨ ${product.aiMatchScore}% Match" else null)
+                            if (badgeLabel != null) {
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFFF3E8FF))
+                                        .background(if (product.isExactAiMatch) Color(0xFFF3E8FF) else Color(0xFFF1F5F9))
+                                        .border(BorderStroke(0.5.dp, if (product.isExactAiMatch) Color(0xFFD8B4FE) else Color(0xFFCBD5E1)), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 4.dp, vertical = 1.dp)
                                 ) {
                                     Text(
-                                        text = product.aiMatchBadge ?: "✨ IA Match",
-                                        color = Color(0xFF7E22CE),
+                                        text = badgeLabel,
+                                        color = if (product.isExactAiMatch) Color(0xFF7E22CE) else Color(0xFF334155),
                                         fontSize = 8.5.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -652,6 +779,21 @@ fun UnifiedProductCard(
                                     color = ShopeeOrange,
                                     fontWeight = FontWeight.Medium
                                 )
+                            }
+                            product.technicalSpecs?.keyHighlightChips?.firstOrNull()?.let { topChip ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Color(0xFFEEF2FF))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "⚡ $topChip",
+                                        color = Color(0xFF3730A3),
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                     }
@@ -713,6 +855,42 @@ fun UnifiedProductCard(
                         contentDescription = null,
                         modifier = Modifier.size(13.dp),
                         tint = Color.White
+                    )
+                }
+
+                if (product.sellerTrust != null) {
+                    IconButton(
+                        onClick = { showSellerTrustSheet = true },
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (product.sellerTrust.isVerified) Color(0xFFECFDF5) else Color(0xFFF1F5F9))
+                            .border(BorderStroke(0.5.dp, if (product.sellerTrust.isVerified) Color(0xFFA7F3D0) else Color(0xFFCBD5E1)), RoundedCornerShape(8.dp))
+                            .testTag("btn_seller_trust_unified_${product.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VerifiedUser,
+                            contentDescription = "Auditoria do Vendedor",
+                            tint = if (product.sellerTrust.isVerified) Color(0xFF047857) else Color(0xFF475569),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = { showSpecsSheet = true },
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFFEEF2FF))
+                        .border(BorderStroke(0.5.dp, Color(0xFFC7D2FE)), RoundedCornerShape(8.dp))
+                        .testTag("btn_specs_unified_${product.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = "Ficha Técnica Neural",
+                        tint = Color(0xFF4F46E5),
+                        modifier = Modifier.size(15.dp)
                     )
                 }
 

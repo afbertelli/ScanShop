@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -91,6 +92,7 @@ import com.example.data.model.Product
 import com.example.data.repository.ProductFilter
 import com.example.ui.components.CompactProductCard
 import com.example.ui.components.SearchBarComponent
+import com.example.ui.components.TechnicalSpecsSheet
 import com.example.ui.components.UnifiedProductCard
 import com.example.ui.theme.AliExpressRed
 import com.example.ui.theme.DealGreen
@@ -153,12 +155,14 @@ fun SearchScreen(
     }
 
     var isHeaderCollapsed by rememberSaveable { mutableStateOf(false) }
+    var activeSpecFilter by rememberSaveable { mutableStateOf<String?>(null) }
     val lazyListState = rememberLazyListState()
 
-    // Expand search bar when user triggers a new search
+    // Expand search bar when user triggers a new search and reset spec filter
     LaunchedEffect(state.isSearching) {
         if (state.isSearching) {
             isHeaderCollapsed = false
+            activeSpecFilter = null
         }
     }
 
@@ -225,6 +229,82 @@ fun SearchScreen(
                     onCollapse = { isHeaderCollapsed = true },
                     canCollapse = hasResults
                 )
+
+                // Barra Inteligente de Chips de Especificações Físicas / Técnicas (IA)
+                val detectedChips = state.comparisonResult?.aiInsight?.technicalSpecs?.keyHighlightChips.orEmpty()
+                if (hasResults && detectedChips.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFF8FAFC))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        item {
+                            Surface(
+                                onClick = { activeSpecFilter = null },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (activeSpecFilter == null) Color(0xFF0F172A) else Color.White,
+                                border = BorderStroke(0.5.dp, if (activeSpecFilter == null) Color(0xFF0F172A) else Color(0xFFCBD5E1))
+                            ) {
+                                Text(
+                                    text = "Todos",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (activeSpecFilter == null) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (activeSpecFilter == null) Color.White else Color(0xFF334155),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.5.dp)
+                                )
+                            }
+                        }
+                        val compResult = state.comparisonResult
+                        if ((compResult?.verifiedSellersCount ?: 0) > 0 || compResult?.unifiedSorted?.any { it.sellerTrust?.isVerified == true } == true) {
+                            item {
+                                val isSelected = activeSpecFilter == "VERIFIED_ONLY"
+                                Surface(
+                                    onClick = { activeSpecFilter = if (isSelected) null else "VERIFIED_ONLY" },
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isSelected) Color(0xFF047857) else Color.White,
+                                    border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF047857) else Color(0xFFA7F3D0)),
+                                    modifier = Modifier.testTag("chip_filter_verified_sellers")
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
+                                    ) {
+                                        Text(
+                                            text = "🛡️ Vendedores Verificados",
+                                            fontSize = 11.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                            color = if (isSelected) Color.White else Color(0xFF047857)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        items(detectedChips) { chip ->
+                            val isSelected = activeSpecFilter == chip
+                            Surface(
+                                onClick = { activeSpecFilter = if (isSelected) null else chip },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) Color(0xFF7E22CE) else Color.White,
+                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF7E22CE) else Color(0xFFD8B4FE))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
+                                ) {
+                                    Text(
+                                        text = "⚡ $chip",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF7E22CE)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -310,11 +390,41 @@ fun SearchScreen(
                     onVoiceSearchClick = startVoiceSearch
                 )
             } else {
+                val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter { p ->
+                    if (activeSpecFilter == "VERIFIED_ONLY") {
+                        p.sellerTrust?.isVerified == true
+                    } else {
+                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
+                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
+                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                    }
+                }.ifEmpty { result.aliExpressProducts }
+
+                val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter { p ->
+                    if (activeSpecFilter == "VERIFIED_ONLY") {
+                        p.sellerTrust?.isVerified == true
+                    } else {
+                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
+                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
+                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                    }
+                }.ifEmpty { result.shopeeProducts }
+
+                val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter { p ->
+                    if (activeSpecFilter == "VERIFIED_ONLY") {
+                        p.sellerTrust?.isVerified == true
+                    } else {
+                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
+                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
+                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                    }
+                }.ifEmpty { result.unifiedSortedProducts }
+
                 when (state.viewMode) {
                     ViewMode.SIDE_BY_SIDE -> {
                         SideBySideComparisonView(
-                            aliProducts = result.aliExpressProducts,
-                            shopeeProducts = result.shopeeProducts,
+                            aliProducts = aliList,
+                            shopeeProducts = shpList,
                             favoriteIds = favoriteIds,
                             onToggleFavorite = onToggleFavorite,
                             listState = lazyListState,
@@ -324,7 +434,7 @@ fun SearchScreen(
                     }
                     ViewMode.UNIFIED_LIST -> {
                         UnifiedListView(
-                            products = result.unifiedSortedProducts,
+                            products = unifiedList,
                             winnerId = result.bestOverallDeal?.id,
                             favoriteIds = favoriteIds,
                             onToggleFavorite = onToggleFavorite
@@ -345,6 +455,31 @@ private fun ComparisonHeaderBar(
 ) {
     val result = state.comparisonResult
     val best = result?.bestOverallDeal
+    var showQuerySpecsSheet by rememberSaveable { mutableStateOf(false) }
+
+    if (showQuerySpecsSheet && result?.aiInsight?.technicalSpecs != null) {
+        val queryProduct = Product(
+            id = "query_specs",
+            store = best?.store ?: com.example.data.model.StoreType.ALIEXPRESS,
+            title = "Análise Neural da Consulta: \"${result.query}\"",
+            imageUrl = best?.imageUrl ?: "",
+            originalPrice = 0.0,
+            promoPrice = best?.promoPrice ?: 0.0,
+            discountPercentage = 0,
+            rating = 5.0,
+            salesCount = 0,
+            freeShipping = true,
+            nationalSeller = false,
+            couponAvailable = false,
+            affiliateUrl = "",
+            deepLinkUrl = "",
+            technicalSpecs = result.aiInsight.technicalSpecs
+        )
+        TechnicalSpecsSheet(
+            product = queryProduct,
+            onDismiss = { showQuerySpecsSheet = false }
+        )
+    }
 
     Surface(
         modifier = modifier.fillMaxWidth(),
@@ -369,12 +504,13 @@ private fun ComparisonHeaderBar(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFFF3E8FF))
                             .border(BorderStroke(0.5.dp, Color(0xFFD8B4FE)), RoundedCornerShape(6.dp))
+                            .clickable { showQuerySpecsSheet = true }
                             .padding(horizontal = 6.dp, vertical = 3.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Busca Inteligente",
+                                contentDescription = "Ver Ficha Neural da Busca",
                                 tint = Color(0xFF7E22CE),
                                 modifier = Modifier.size(11.5.dp)
                             )
@@ -416,6 +552,25 @@ private fun ComparisonHeaderBar(
                             )
                         }
                     }
+                    if (result.aiInsight.didYouMean != null) {
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFFEFF6FF))
+                                .border(BorderStroke(0.5.dp, Color(0xFFBFDBFE)), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "💡 ${result.aiInsight.didYouMean}",
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1D4ED8),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
                 }
 
@@ -444,6 +599,25 @@ private fun ComparisonHeaderBar(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 softWrap = false
+                            )
+                        }
+                    }
+                    if ((result?.verifiedSellersCount ?: 0) > 0) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFFECFDF5))
+                                .border(BorderStroke(0.5.dp, Color(0xFFA7F3D0)), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 3.5.dp)
+                        ) {
+                            Text(
+                                text = "🛡️ ${result?.verifiedSellersCount} Verificados",
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF047857),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -736,13 +910,18 @@ private fun SideBySideComparisonView(
                                     .fillMaxSize()
                                     .clip(RoundedCornerShape(10.dp))
                                     .border(1.dp, Color(0xFFE4E7EC), RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFFAFAFA)),
+                                    .background(Color(0xFFFAFAFA))
+                                    .padding(8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Sem mais ofertas",
+                                    text = if (aliProducts.isEmpty() && index == 0)
+                                        "Nenhum produto compatível no AliExpress para este modelo"
+                                    else
+                                        "Sem mais ofertas",
                                     fontSize = 11.sp,
-                                    color = Color.Gray
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
@@ -767,13 +946,18 @@ private fun SideBySideComparisonView(
                                     .fillMaxSize()
                                     .clip(RoundedCornerShape(10.dp))
                                     .border(1.dp, Color(0xFFE4E7EC), RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFFAFAFA)),
+                                    .background(Color(0xFFFAFAFA))
+                                    .padding(8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Sem mais ofertas",
+                                    text = if (shopeeProducts.isEmpty() && index == 0)
+                                        "Nenhum produto compatível na Shopee para este modelo"
+                                    else
+                                        "Sem mais ofertas",
                                     fontSize = 11.sp,
-                                    color = Color.Gray
+                                    color = Color.Gray,
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
@@ -817,13 +1001,16 @@ private fun EmptySearchState(
     onSelectSuggestion: (String) -> Unit = {},
     onVoiceSearchClick: () -> Unit = {}
 ) {
-    val popularSuggestions = listOf(
-        "Fone Bluetooth",
-        "Smartwatch",
-        "Teclado Mecânico",
-        "Drone 4K",
-        "Carregador 65W",
-        "Mouse Sem Fio"
+    val aiSuggestedSearches = listOf(
+        "Samsung Galaxy S24" to "📱 Celular",
+        "Placa-Mãe X99 MR9A PRO" to "🖥️ Hardware",
+        "Smart TV 55 4K UHD" to "📺 Telas",
+        "Notebook Dell Inspiron i7" to "💻 Laptops",
+        "Placa de Vídeo RTX 4060" to "🎮 GPU",
+        "Fone Bluetooth JBL ANC" to "🎧 Áudio",
+        "Smartwatch Amazfit AMOLED" to "⌚ Relógios",
+        "Tênis Nike Corrida" to "👟 Calçados",
+        "Drone 4K com GPS" to "🚁 Drones"
     )
 
     Box(
@@ -913,8 +1100,8 @@ private fun EmptySearchState(
             if (query.isEmpty()) {
                 Spacer(modifier = Modifier.height(20.dp))
                 Text(
-                    text = "Sugestões populares:",
-                    fontSize = 11.5.sp,
+                    text = "✨ Sugestões Inteligentes da IA:",
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF334155)
                 )
@@ -923,23 +1110,33 @@ private fun EmptySearchState(
                     horizontalArrangement = Arrangement.Center,
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    popularSuggestions.forEach { term ->
+                    aiSuggestedSearches.forEach { (term, category) ->
                         Surface(
                             modifier = Modifier
                                 .padding(horizontal = 3.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .clickable { onSelectSuggestion(term) },
                             color = Color.White,
-                            border = BorderStroke(1.dp, Color(0xFFCBD5E1)),
+                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text(
-                                text = "🔍 $term",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF1E293B),
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            )
+                            ) {
+                                Text(
+                                    text = term,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF1E293B)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = category,
+                                    fontSize = 9.5.sp,
+                                    color = Color(0xFF64748B)
+                                )
+                            }
                         }
                     }
                 }

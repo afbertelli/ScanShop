@@ -93,4 +93,29 @@ class ExampleRobolectricTest {
         val emptyFavorites = favoriteRepository.allFavorites.first()
         assertEquals(0, emptyFavorites.size)
     }
+
+    @Test
+    fun `verify seller trust evaluation on product`() {
+        val product = Product(
+            id = "shp_seller_test",
+            store = StoreType.SHOPEE,
+            title = "Xiaomi Redmi Note 13 4G Loja Oficial",
+            imageUrl = "https://example.com/redmi.jpg",
+            originalPrice = 1299.0,
+            promoPrice = 899.0,
+            discountPercentage = 30,
+            rating = 4.9,
+            salesCount = 4200,
+            freeShipping = true,
+            nationalSeller = true,
+            couponAvailable = true,
+            affiliateUrl = "https://shopee.com.br",
+            deepLinkUrl = "shopee://item/test"
+        )
+
+        val sellerTrust = com.example.data.ai.SellerTrustEngine.evaluateSeller(product)
+        assertTrue(sellerTrust.isVerified)
+        assertTrue(sellerTrust.trustScore >= 80)
+        assertNotNull(sellerTrust.badgeText)
+    }
 }
