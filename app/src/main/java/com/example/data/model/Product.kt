@@ -30,13 +30,34 @@ data class Product(
     val aiMatchScore: Int = 90,
     val aiConfidenceBadge: String? = null,
     val sellerName: String? = null,
-    val sellerTrust: SellerTrustInfo? = null
+    val sellerTrust: SellerTrustInfo? = null,
+    val priceDropPercentage: Double = 0.0,
+    val hasPriceDropAlert: Boolean = false,
+    val initialSavedPrice: Double = promoPrice
 ) {
     val formattedPromoPrice: String
         get() = formatBrl(promoPrice)
 
     val formattedOriginalPrice: String
         get() = formatBrl(originalPrice)
+
+    val brand: String?
+        get() = technicalSpecs?.brand
+
+    val model: String?
+        get() = technicalSpecs?.model
+
+    val capacity: String?
+        get() {
+            val ram = technicalSpecs?.ramMemory
+            val storage = technicalSpecs?.storageCapacity
+            return when {
+                !ram.isNullOrBlank() && !storage.isNullOrBlank() -> "$ram / $storage"
+                !storage.isNullOrBlank() -> storage
+                !ram.isNullOrBlank() -> ram
+                else -> null
+            }
+        }
 
     private fun formatBrl(amount: Double): String {
         val format = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("pt-BR"))

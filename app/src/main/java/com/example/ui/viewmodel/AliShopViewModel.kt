@@ -17,6 +17,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import com.example.data.monitor.PriceCheckSummary
+import com.example.data.monitor.PriceMonitoringManager
+
 enum class ViewMode {
     SIDE_BY_SIDE,
     UNIFIED_LIST;
@@ -50,7 +53,8 @@ data class DealsUiState(
 class AliShopViewModel(
     private val affiliateRepository: AffiliateProductRepository,
     private val favoriteRepository: FavoriteRepository,
-    private val aiSearchService: AiSearchService? = null
+    private val aiSearchService: AiSearchService? = null,
+    private val priceMonitoringManager: PriceMonitoringManager? = null
 ) : ViewModel() {
 
     private val _selectedTab = MutableStateFlow(0)
@@ -69,8 +73,15 @@ class AliShopViewModel(
         list.map { it.id }.toSet()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
+    val isCheckingPrices: StateFlow<Boolean> = priceMonitoringManager?.isChecking
+        ?: MutableStateFlow(false).asStateFlow()
+
+    val priceCheckSummary: StateFlow<PriceCheckSummary?> = priceMonitoringManager?.lastCheckSummary
+        ?: MutableStateFlow<PriceCheckSummary?>(null).asStateFlow()
+
     init {
         loadDeals()
+        priceMonitoringManager?.startPeriodicMonitoring(viewModelScope)
     }
 
     fun selectTab(index: Int) {
@@ -131,8 +142,10 @@ class AliShopViewModel(
                 )
             } catch (e: Exception) {
                 _searchState.value = _searchState.value.copy(
+                    comparisonResult = null,
+                    recentSearches = currentRecent,
                     isSearching = false,
-                    errorMessage = "Não foi possível carregar os produtos. Tente novamente."
+                    errorMessage = "Não foi possível carregar os produtos em tempo real. Verifique sua conexão e tente novamente."
                 )
             }
         }
@@ -188,6 +201,25 @@ class AliShopViewModel(
     fun removeFavorite(productId: String) {
         viewModelScope.launch {
             favoriteRepository.removeFavorite(productId)
+        }
+    }
+
+    /**
+     * Dispara a verificação imediata de preços para todos os itens favoritados
+     */
+    fun checkFavoritePrices() {
+        viewModelScope.launch {
+            priceMonitoringManager?.checkFavoritePrices()
+        }
+    }
+
+    /**
+     * Simula uma queda de preço superior a 10% (ex: 15%) em um produto salvo nos favoritos,
+     * disparando notificação nativa do Android imediatamente para testar o sistema.
+     */
+    fun simulatePriceDrop(productId: String, dropPercentage: Double = 15.0) {
+        viewModelScope.launch {
+            priceMonitoringManager?.simulatePriceDrop(productId, dropPercentage)
         }
     }
 }

@@ -85,6 +85,14 @@ class ExampleUnitTest {
         assertFalse(aiService.matchesProductTitle(tvRemote, "smartv samsung", insightSmartTvSamsung, 197.0))
         assertFalse(aiService.matchesProductTitle(tvMount, "smartv samsung", insightSmartTvSamsung, 116.0))
 
+        val insightSmartTvSamsungDirect = aiService.analyzeLocal("smart tv samsung")
+        assertEquals("smart tv", insightSmartTvSamsungDirect.categoryKey)
+        assertEquals("Samsung", insightSmartTvSamsungDirect.detectedBrand)
+        assertTrue(aiService.matchesProductTitle("Samsung Smart TV 50 Pol. MiniLED 4K", "smart tv samsung", insightSmartTvSamsungDirect, 2599.0))
+        assertTrue(aiService.matchesProductTitle("Smart TV Samsung 32” LS32H5000FGXZD HD HDR Tizen Wi-Fi", "smart tv samsung", insightSmartTvSamsungDirect, 1149.0))
+        assertFalse(aiService.matchesProductTitle("Controle Remoto Para Tv Samsung Smart Hub", "smart tv samsung", insightSmartTvSamsungDirect, 19.20))
+        assertFalse(aiService.matchesProductTitle("Suporte TV Fixo Universal Brasforma", "smart tv samsung", insightSmartTvSamsungDirect, 18.91))
+
         // 2. monitor (de pc) & monitor de pc
         val insightMonitorPc = aiService.analyzeLocal("monitor (de pc)")
         assertEquals("monitor", insightMonitorPc.categoryKey)
@@ -198,5 +206,142 @@ class ExampleUnitTest {
         assertFalse("Poor rated seller must not be verified", poorTrust.isVerified)
         assertTrue("Poor trust score must be below 75", poorTrust.trustScore < 75)
     }
-}
 
+    @Test
+    fun testBrandModelDetectorCoherence() {
+        // Prevents words like "Original", "Novo", "Super", "Cabo" from becoming brands
+        val xiaomiTitle = "Original Xiaomi Redmi Note 13 8GB 256GB Smartphone"
+        assertEquals("Xiaomi", com.example.data.ai.BrandModelDetector.detectBrand(xiaomiTitle))
+        assertEquals("Redmi NOTE 13", com.example.data.ai.BrandModelDetector.detectModel(xiaomiTitle, "Xiaomi"))
+
+        val appleTitle = "Novo Apple iPhone 15 Pro Max 256GB Titânio"
+        assertEquals("Apple", com.example.data.ai.BrandModelDetector.detectBrand(appleTitle))
+        assertEquals("iPhone 15 PRO MAX", com.example.data.ai.BrandModelDetector.detectModel(appleTitle, "Apple"))
+
+        val machinistTitle = "Placa Mãe Machinist X99 MR9A PRO LGA 2011-3 DDR4"
+        assertEquals("Machinist", com.example.data.ai.BrandModelDetector.detectBrand(machinistTitle))
+        assertEquals("X99 MR9A PRO", com.example.data.ai.BrandModelDetector.detectModel(machinistTitle, "Machinist"))
+
+        // Accessories detection
+        val caseTitle = "Capa Case de Silicone Aveludada para iPhone 15 Pro"
+        assertTrue(com.example.data.ai.BrandModelDetector.isAccessory(caseTitle))
+        assertEquals("Acessório & Proteção", com.example.data.ai.BrandModelDetector.detectProductType(caseTitle))
+    }
+
+    @Test
+    fun testCapacityExtractorDisambiguation() {
+        // 128GB in a smartphone must be STORAGE, never RAM
+        val phoneTitle = "Smartphone Samsung Galaxy A54 128GB 5G"
+        val specsPhone = com.example.data.ai.CapacityExtractor.extract(phoneTitle)
+        assertEquals("128GB", specsPhone.storage)
+        assertNull(specsPhone.ram)
+
+        // Combo 8+256GB
+        val comboTitle = "Redmi Note 13 8+256GB Versão Global"
+        val specsCombo = com.example.data.ai.CapacityExtractor.extract(comboTitle)
+        assertEquals("8GB RAM", specsCombo.ram)
+        assertEquals("256GB", specsCombo.storage)
+        assertEquals("8GB + 256GB", specsCombo.capacityLabel)
+
+        // PC RAM and SSD
+        val pcTitle = "Notebook Gamer Acer Nitro 5 16GB RAM 512GB SSD RTX 3050"
+        val specsPc = com.example.data.ai.CapacityExtractor.extract(pcTitle)
+        assertEquals("16GB RAM", specsPc.ram)
+        assertEquals("512GB SSD", specsPc.storage)
+
+        // Screen size and Hz
+        val tvTitle = "Smart TV 55 polegadas 4K UHD 120Hz"
+        val specsTv = com.example.data.ai.CapacityExtractor.extract(tvTitle)
+        assertEquals("55\"", specsTv.display)
+        assertEquals("120HZ", specsTv.refreshRateHz)
+        assertEquals("4K Ultra HD", specsTv.resolution)
+    }
+
+    @Test
+    fun testNeuralSpecEngineEndToEndCoherence() {
+        val title = "Original Xiaomi Redmi Note 13 8GB 256GB 5G"
+        val specs = com.example.data.ai.NeuralSpecEngine.extractSpecsFromProduct(title, 1200.0)
+
+        assertEquals("Xiaomi", specs.brand)
+        assertEquals("Redmi NOTE 13", specs.model)
+        assertEquals("256GB", specs.storageCapacity)
+        assertNotNull(specs.ramMemory)
+        assertTrue(specs.ramMemory?.contains("8GB") == true)
+        assertTrue(specs.keyHighlightChips.any { it.contains("Xiaomi") })
+        assertTrue(specs.keyHighlightChips.any { it.contains("256GB") })
+    }
+
+    @Test
+    fun testAiSearchServiceX99MotherboardStrictRejection() {
+        val aiService = AiSearchService()
+        val insightX99 = aiService.analyzeLocal("x99")
+
+        assertEquals("placa mae", insightX99.categoryKey)
+        assertFalse(insightX99.isAccessoryIntent)
+        assertTrue("Optimized queries should include placa mae or motherboard", 
+            insightX99.optimizedQueries.any { it.contains("placa", ignoreCase = true) || it.contains("motherboard", ignoreCase = true) })
+
+        // 1. Spurious AliExpress items from user report must be strictly rejected
+        val carObdCap = "Tampa de silicone para porta OBD de carro, à prova d'água, tampas anti-poeira e anti-entu..."
+        val chassisRack = "Rack de chassi de estúdio aberto, suporte de placa principal ATX X79 X99 espesso"
+        val phoneHolder = "Suporte para celular veicular saída de ar X99 Universal"
+
+        assertFalse("OBD silicone cap must be rejected", 
+            aiService.matchesProductTitle(carObdCap, "x99", insightX99, 19.63))
+        assertFalse("Open chassis rack must be rejected", 
+            aiService.matchesProductTitle(chassisRack, "x99", insightX99, 41.45))
+        assertFalse("Car phone mount must be rejected", 
+            aiService.matchesProductTitle(phoneHolder, "x99", insightX99, 29.90))
+
+        // Also test with BrandModelDetector.isAccessory
+        assertTrue("OBD cap should be detected as accessory/unrelated", 
+            com.example.data.ai.BrandModelDetector.isAccessory(carObdCap))
+        assertTrue("Chassis rack should be detected as accessory/support", 
+            com.example.data.ai.BrandModelDetector.isAccessory(chassisRack))
+
+        // 2. Real X99 motherboards must match
+        val realX99_1 = "Placa-Mãe X99 DDR4 LGA2011 X99 P4 H55 Chipset Gigabit Ethernet X99 Para Jogos Com ..."
+        val realX99_2 = "Placa-Mãe X99 X99 P3 LGA2011 Q57 Chipset Gigabit Ethernet Suporta 4x RAM DDR..."
+        val realX99_3 = "Placa-Mãe Machinist X99 MR9A PRO LGA 2011-3 DDR4"
+        val realX99_4 = "Kit Placa Mãe X99 Xeon E5 2670 V3 16gb DDR4 Gamer"
+
+        assertTrue("Real X99 P4 motherboard must be accepted", 
+            aiService.matchesProductTitle(realX99_1, "x99", insightX99, 269.49))
+        assertTrue("Real X99 P3 motherboard must be accepted", 
+            aiService.matchesProductTitle(realX99_2, "x99", insightX99, 284.34))
+        assertTrue("Machinist X99 motherboard must be accepted", 
+            aiService.matchesProductTitle(realX99_3, "x99", insightX99, 380.00))
+        assertTrue("Kit X99 motherboard must be accepted", 
+            aiService.matchesProductTitle(realX99_4, "x99", insightX99, 499.00))
+    }
+
+    @Test
+    fun testRealSearchProductsSmartTvSamsung(): Unit = kotlinx.coroutines.runBlocking {
+        val repo = com.example.data.repository.AffiliateProductRepository()
+        val result = repo.searchProducts("smart tv samsung")
+        println("TEST OUTPUT: Ali products count = " + result.aliExpressProducts.size)
+        println("TEST OUTPUT: Shopee products count = " + result.shopeeProducts.size)
+        assertEquals("smart tv samsung", result.query)
+        assertNotNull(result.aliExpressProducts)
+        assertNotNull(result.shopeeProducts)
+        // Garante que NENHUM produto é proveniente de catálogo salvo ou mock
+        assertTrue("AliExpress must not contain curated catalog items", result.aliExpressProducts.none { it.id.contains("curated") || it.id.contains("supp") })
+        assertTrue("Shopee must not contain curated catalog items", result.shopeeProducts.none { it.id.contains("curated") || it.id.contains("supp") })
+        if (result.shopeeProducts.isNotEmpty()) {
+            assertTrue("Shopee products should match Samsung intent", result.shopeeProducts.any { it.title.contains("Samsung", ignoreCase = true) })
+        }
+    }
+
+    @Test
+    fun testRealSearchProductsX99(): Unit = kotlinx.coroutines.runBlocking {
+        val repo = com.example.data.repository.AffiliateProductRepository()
+        val result = repo.searchProducts("x99")
+        println("TEST OUTPUT X99: Ali count = " + result.aliExpressProducts.size + ", Shopee count = " + result.shopeeProducts.size)
+        assertEquals("x99", result.query)
+        assertNotNull(result.aliExpressProducts)
+        assertNotNull(result.shopeeProducts)
+        // Garante que NENHUM produto é proveniente de catálogo salvo ou mock
+        assertTrue("AliExpress must not contain curated items for X99", result.aliExpressProducts.none { it.id.contains("curated") || it.id.contains("supp") })
+        assertTrue("Shopee must not contain curated items for X99", result.shopeeProducts.none { it.id.contains("curated") || it.id.contains("supp") })
+    }
+}

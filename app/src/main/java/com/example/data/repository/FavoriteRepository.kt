@@ -29,6 +29,18 @@ class FavoriteRepository(private val favoriteDao: FavoriteDao) {
         favoriteDao.deleteFavoriteById(productId)
     }
 
+    suspend fun getAllFavoritesList(): List<FavoriteProductEntity> {
+        return favoriteDao.getAllFavoritesList()
+    }
+
+    suspend fun getFavoriteById(id: String): FavoriteProductEntity? {
+        return favoriteDao.getFavoriteById(id)
+    }
+
+    suspend fun updatePriceDrop(id: String, newPrice: Double, dropPercent: Double, hasAlert: Boolean, timestamp: Long) {
+        favoriteDao.updatePriceDrop(id, newPrice, dropPercent, hasAlert, timestamp)
+    }
+
     suspend fun toggleFavorite(product: Product, isCurrentlyFavorite: Boolean) {
         if (isCurrentlyFavorite) {
             removeFavorite(product.id)

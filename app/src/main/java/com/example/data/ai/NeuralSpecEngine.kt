@@ -44,73 +44,102 @@ object NeuralSpecEngine {
      * Extrai especificações completas de uma consulta do usuário
      */
     fun extractSpecsFromQuery(query: String): ProductTechnicalSpecs {
+        val detectedBrand = BrandModelDetector.detectBrand(query)
+        val detectedModel = BrandModelDetector.detectModel(query, detectedBrand)
+        val detectedType = BrandModelDetector.detectProductType(query)
         val base = parseHeuristicSpecs(query, price = 0.0, isQuery = true)
-        return extractDynamicUniversalSpecs(query, base)
+        val enriched = extractDynamicUniversalSpecs(query, base)
+        return enriched.copy(
+            productType = if (base.productType != "Eletrônicos & Consumo Inteligente") base.productType else detectedType,
+            brand = detectedBrand ?: enriched.brand,
+            model = detectedModel ?: enriched.model
+        )
     }
 
     /**
-     * Extrai especificações completas do título de um produto retornado pelas APIs (Shopee / AliExpress)
+     * Extrai especificações completas do título de um produto retornado pelas APIs (Shopee / AliExpress).
+     * Garante coerência estrita de marca, modelo, capacidade e especificações técnicas.
      */
     fun extractSpecsFromProduct(
         title: String,
         price: Double,
         referenceQuerySpecs: ProductTechnicalSpecs? = null
     ): ProductTechnicalSpecs {
+        val detectedBrand = BrandModelDetector.detectBrand(title)
+        val detectedModel = BrandModelDetector.detectModel(title, detectedBrand)
+        val isAccessory = BrandModelDetector.isAccessory(title)
+        val detectedType = BrandModelDetector.detectProductType(title)
+
         val rawSpecs = parseHeuristicSpecs(title, price = price, isQuery = false)
         val enriched = extractDynamicUniversalSpecs(title, rawSpecs)
 
-        if (referenceQuerySpecs != null) {
-            val inheritedType = enriched.productType ?: referenceQuerySpecs.productType
-            val inheritedBrand = if (enriched.brand == "Oficial" || enriched.brand == "Gamer / OEM") referenceQuerySpecs.brand ?: enriched.brand else enriched.brand
-            val inheritedModel = enriched.model ?: referenceQuerySpecs.model
-            val combinedChips = (enriched.keyHighlightChips + referenceQuerySpecs.keyHighlightChips).distinct().take(5)
+        val finalBrand = detectedBrand
+            ?: if (enriched.brand != "Oficial" && enriched.brand != "Gamer / OEM") enriched.brand else null
+        val finalModel = detectedModel ?: enriched.model
 
-            return enriched.copy(
-                productType = inheritedType,
-                brand = inheritedBrand,
-                model = inheritedModel,
-                keyHighlightChips = if (enriched.keyHighlightChips.isNotEmpty()) enriched.keyHighlightChips else combinedChips
-            )
+        val resolvedBrand = when {
+            finalBrand != null -> finalBrand
+            !isAccessory && referenceQuerySpecs?.brand != null && titleMatchesRef(title, referenceQuerySpecs.brand) -> referenceQuerySpecs.brand
+            else -> finalBrand ?: "Oficial"
         }
 
-        return enriched
+        val resolvedModel = when {
+            finalModel != null -> finalModel
+            !isAccessory && referenceQuerySpecs?.model != null && titleMatchesRef(title, referenceQuerySpecs.model) -> referenceQuerySpecs.model
+            else -> finalModel
+        }
+
+        val resolvedType = when {
+            isAccessory -> "Acessório & Proteção"
+            enriched.productType != null && enriched.productType != "Eletrônicos & Consumo Inteligente" -> enriched.productType
+            else -> detectedType
+        }
+
+        // Constrói chips rigorosamente coerentes com o produto real
+        val coherentChips = mutableListOf<String>()
+        if (resolvedBrand != "Oficial") {
+            coherentChips.add(if (!resolvedModel.isNullOrBlank()) "$resolvedBrand $resolvedModel" else resolvedBrand)
+        }
+        enriched.storageCapacity?.let { coherentChips.add(it) }
+        enriched.ramMemory?.let { if (!coherentChips.contains(it)) coherentChips.add(it) }
+        enriched.displaySpecs?.takeIf { it.contains("pol") || it.contains("AMOLED") || it.contains("OLED") }?.let {
+            coherentChips.add(it.take(20))
+        }
+        if (enriched.keyHighlightChips.isNotEmpty()) {
+            for (c in enriched.keyHighlightChips) {
+                if (!coherentChips.contains(c) && coherentChips.size < 5) coherentChips.add(c)
+            }
+        }
+
+        return enriched.copy(
+            productType = resolvedType,
+            brand = resolvedBrand,
+            model = resolvedModel,
+            keyHighlightChips = coherentChips.distinct().take(5)
+        )
+    }
+
+    private fun titleMatchesRef(title: String, ref: String): Boolean {
+        val normTitle = norm(title)
+        val normRef = norm(ref)
+        return normRef.isNotBlank() && normTitle.contains(normRef)
     }
 
     /**
      * Extrator Dinâmico Universal via Expressões Regulares e Padrões Semânticos:
-     * Detecta e injeta RAM, Armazenamento, Polegadas, Resolução, Hz, Bateria, Conectividade, Anatel, etc.
+     * Utiliza CapacityExtractor para resolver ambiguidades entre RAM e Armazenamento (ex: 8+256GB, 128GB ROM).
      */
     private fun extractDynamicUniversalSpecs(
         text: String,
         base: ProductTechnicalSpecs
     ): ProductTechnicalSpecs {
+        val capSpecs = CapacityExtractor.extract(text)
         val clean = norm(text)
         val chips = base.keyHighlightChips.toMutableList()
 
-        // 1. RAM
-        val ramMatch = Regex("\\b(2|4|6|8|12|16|24|32|64|128)\\s*(gb|g)\\s*(ram|lpddr[45]x?|ddr[345])?\\b").find(clean)
-        val detectedRam = if (ramMatch != null) {
-            val amount = ramMatch.groupValues[1]
-            val type = when {
-                clean.contains("ddr5") || clean.contains("lpddr5") -> "DDR5"
-                clean.contains("ddr4") || clean.contains("lpddr4") -> "DDR4"
-                clean.contains("ddr3") -> "DDR3"
-                else -> "RAM"
-            }
-            "${amount}GB $type"
-        } else base.ramMemory
-
-        // 2. Armazenamento / SSD
-        val storageMatch = Regex("\\b(32|64|128|256|512)\\s*(gb|g)|\\b(1|2|4)\\s*(tb|t)\\s*(ssd|nvme|rom)?\\b").find(clean)
-        val detectedStorage = if (storageMatch != null) {
-            val cap = storageMatch.value.uppercase(Locale.ROOT).trim()
-            when {
-                clean.contains("nvme") || clean.contains("m.2") -> "$cap SSD NVMe PCIe"
-                clean.contains("ssd") -> "$cap SSD Ultrarrápido"
-                clean.contains("emmc") -> "$cap eMMC 5.1"
-                else -> cap
-            }
-        } else base.storageCapacity
+        // 1. RAM e Armazenamento estritamente desambiguados
+        val detectedRam = capSpecs.ram ?: base.ramMemory
+        val detectedStorage = capSpecs.storage ?: base.storageCapacity
 
         // 3. Tamanho da Tela (polegadas)
         val screenMatch = Regex("\\b(6\\.[0-9]{1,2}|7\\.[0-9]{1,2}|1[3-7]\\.[0-9]|2[4789]|3[24]|4[03]|5[058]|6[50]|7[05])\\s*(\"|polegadas|pol|-inch|inch)\\b").find(clean)
@@ -929,28 +958,34 @@ object NeuralSpecEngine {
         // -------------------------------------------------------------
         // 9. DEFAULT / ELETRÔNICOS & VESTUÁRIO GERAL
         // -------------------------------------------------------------
-        val detectedBrand = text.split("\\s+".toRegex()).firstOrNull()?.replaceFirstChar { it.uppercase() } ?: "Oficial"
-        chips.add(detectedBrand)
-        chips.add("Item Original")
-        chips.add("Garantia Ativa")
+        val detectedBrand = BrandModelDetector.detectBrand(text)
+        val detectedModel = BrandModelDetector.detectModel(text, detectedBrand)
+        val detectedType = BrandModelDetector.detectProductType(text)
+        val capSpecs = CapacityExtractor.extract(text)
+
+        val brandLabel = detectedBrand ?: "Garantia Oficial"
+        chips.add(brandLabel)
+        detectedModel?.let { chips.add(it) }
+        capSpecs.capacityLabel?.let { chips.add(it) }
+        chips.add("Original Verificado")
 
         return ProductTechnicalSpecs(
-            productType = "Eletrônicos & Consumo Inteligente",
-            brand = detectedBrand,
-            model = text.take(30),
-            subModelOrPartNumber = "Edição Oficial",
+            productType = detectedType,
+            brand = detectedBrand ?: "Oficial",
+            model = detectedModel ?: text.take(35).trim(),
+            subModelOrPartNumber = detectedModel ?: "Edição Oficial",
             releaseYear = "2024",
             colorFinish = "Padrão de Fábrica Oficial",
             dimensionsWeight = "Dimensões padronizadas de mercado",
             buildMaterial = "Materiais certificados de alta durabilidade e acabamento refinado",
             protectionRating = "Garantia de conformidade e integridade no transporte",
             designErgonomics = "Design moderno e funcional",
-            displaySpecs = "Compatível com os padrões atuais de resolução",
+            displaySpecs = capSpecs.display ?: "Compatível com os padrões atuais de resolução",
             processorCpuGpu = "Componentes originais de alta eficiência",
-            ramMemory = "Especificação conforme lote do fabricante",
-            storageCapacity = "Capacidade integral certificada",
+            ramMemory = capSpecs.ram ?: "Especificação conforme lote do fabricante",
+            storageCapacity = capSpecs.storage ?: "Capacidade integral certificada",
             expandability = "Compatibilidade ampla com ecossistema atual",
-            batterySpecs = "Conforme especificação técnica oficial",
+            batterySpecs = capSpecs.battery ?: "Conforme especificação técnica oficial",
             chargingTypeVoltage = "Padrão Bivolt automático ou alimentação USB",
             wirelessConnectivity = "Conectividade sem fio estável e verificada",
             physicalPorts = "Conexões padronizadas de mercado",
@@ -964,7 +999,7 @@ object NeuralSpecEngine {
             packagingContents = "Produto original em embalagem selada com manual e acessórios",
             ecologicalFootprint = "Embalagem sustentável",
             matchConfidence = 88,
-            keyHighlightChips = chips.take(4)
+            keyHighlightChips = chips.distinct().take(4)
         )
     }
 

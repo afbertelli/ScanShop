@@ -25,15 +25,28 @@ data class FavoriteProductEntity(
     val deepLinkUrl: String,
     val savedAtTimestamp: Long,
     val initialSavedPrice: Double,
-    val lowest30DaysPrice: Double
+    val lowest30DaysPrice: Double,
+    val priceDropPercentage: Double = 0.0,
+    val hasPriceDropAlert: Boolean = false,
+    val lastNotifiedPrice: Double = promoPrice,
+    val lastCheckedTimestamp: Long = savedAtTimestamp
 ) {
     fun toProduct(): Product {
         val store = if (storeName == StoreType.ALIEXPRESS.name) StoreType.ALIEXPRESS else StoreType.SHOPEE
-        val priceDiff = initialSavedPrice - promoPrice
-        val dropNotice = if (priceDiff > 1.0) {
-            String.format("Caiu R$ %.2f desde que você salvou!", priceDiff).replace('.', ',')
+        val calculatedDropPercent = if (initialSavedPrice > 0.0 && promoPrice < initialSavedPrice) {
+            ((initialSavedPrice - promoPrice) / initialSavedPrice) * 100.0
         } else {
-            "Preço estável nas últimas 48h"
+            0.0
+        }
+        val effectiveDropPercent = if (priceDropPercentage > 0.0) priceDropPercentage else calculatedDropPercent
+        val isAlert = hasPriceDropAlert || effectiveDropPercent >= 10.0
+
+        val dropNotice = if (isAlert) {
+            String.format("🔥 Queda de %.0f%%! (R$ %.2f ➔ R$ %.2f)", effectiveDropPercent, initialSavedPrice, promoPrice).replace('.', ',')
+        } else if (initialSavedPrice - promoPrice > 1.0) {
+            String.format("Caiu R$ %.2f desde que você salvou!", initialSavedPrice - promoPrice).replace('.', ',')
+        } else {
+            "Preço monitorado e estável"
         }
 
         return Product(
@@ -53,12 +66,17 @@ data class FavoriteProductEntity(
             affiliateUrl = affiliateUrl,
             deepLinkUrl = deepLinkUrl,
             priceDropNotice = dropNotice,
-            lowest30DaysPrice = lowest30DaysPrice
+            lowest30DaysPrice = lowest30DaysPrice,
+            priceDropPercentage = effectiveDropPercent,
+            hasPriceDropAlert = isAlert,
+            initialSavedPrice = initialSavedPrice
         )
     }
 
     companion object {
         fun fromProduct(product: Product): FavoriteProductEntity {
+            val now = System.currentTimeMillis()
+            val initial = if (product.initialSavedPrice > 0.0) product.initialSavedPrice else product.promoPrice
             return FavoriteProductEntity(
                 id = product.id,
                 storeName = product.store.name,
@@ -75,9 +93,13 @@ data class FavoriteProductEntity(
                 couponText = product.couponText,
                 affiliateUrl = product.affiliateUrl,
                 deepLinkUrl = product.deepLinkUrl,
-                savedAtTimestamp = System.currentTimeMillis(),
-                initialSavedPrice = product.promoPrice + (if (product.id.hashCode() % 2 == 0) 15.0 else 0.0), // Show realistic price variation
-                lowest30DaysPrice = product.lowest30DaysPrice
+                savedAtTimestamp = now,
+                initialSavedPrice = initial,
+                lowest30DaysPrice = product.lowest30DaysPrice,
+                priceDropPercentage = product.priceDropPercentage,
+                hasPriceDropAlert = product.hasPriceDropAlert,
+                lastNotifiedPrice = product.promoPrice,
+                lastCheckedTimestamp = now
             )
         }
     }

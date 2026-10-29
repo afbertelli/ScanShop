@@ -58,6 +58,8 @@ import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -92,6 +94,7 @@ import com.example.data.model.Product
 import com.example.data.repository.ProductFilter
 import com.example.ui.components.CompactProductCard
 import com.example.ui.components.SearchBarComponent
+import com.example.ui.components.SearchLoadingSplashScreen
 import com.example.ui.components.TechnicalSpecsSheet
 import com.example.ui.components.UnifiedProductCard
 import com.example.ui.theme.AliExpressRed
@@ -230,9 +233,25 @@ fun SearchScreen(
                     canCollapse = hasResults
                 )
 
-                // Barra Inteligente de Chips de Especificações Físicas / Técnicas (IA)
-                val detectedChips = state.comparisonResult?.aiInsight?.technicalSpecs?.keyHighlightChips.orEmpty()
-                if (hasResults && detectedChips.isNotEmpty()) {
+                // Barra Inteligente e Profissional de Filtros e Chips Técnicos (IA)
+                val compResult = state.comparisonResult
+                val allProducts = compResult?.unifiedSorted.orEmpty()
+                val detectedBrands = remember(compResult) {
+                    allProducts.mapNotNull { it.brand }
+                        .filter { it.isNotBlank() && it != "Oficial" && it != "Gamer / OEM" }
+                        .distinct()
+                        .take(4)
+                }
+                val detectedCapacities = remember(compResult) {
+                    allProducts.mapNotNull { it.capacity }
+                        .distinct()
+                        .take(4)
+                }
+                val detectedChips = compResult?.aiInsight?.technicalSpecs?.keyHighlightChips.orEmpty()
+                    .filter { chip -> !detectedBrands.contains(chip) && !detectedCapacities.contains(chip) }
+                    .take(4)
+
+                if (hasResults) {
                     LazyRow(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -257,8 +276,7 @@ fun SearchScreen(
                                 )
                             }
                         }
-                        val compResult = state.comparisonResult
-                        if ((compResult?.verifiedSellersCount ?: 0) > 0 || compResult?.unifiedSorted?.any { it.sellerTrust?.isVerified == true } == true) {
+                        if ((compResult?.verifiedSellersCount ?: 0) > 0 || allProducts.any { it.sellerTrust?.isVerified == true }) {
                             item {
                                 val isSelected = activeSpecFilter == "VERIFIED_ONLY"
                                 Surface(
@@ -282,6 +300,50 @@ fun SearchScreen(
                                 }
                             }
                         }
+                        items(detectedBrands) { brand ->
+                            val filterKey = "BRAND:$brand"
+                            val isSelected = activeSpecFilter == filterKey
+                            Surface(
+                                onClick = { activeSpecFilter = if (isSelected) null else filterKey },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) Color(0xFF3730A3) else Color.White,
+                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF3730A3) else Color(0xFFC7D2FE))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
+                                ) {
+                                    Text(
+                                        text = "🏷️ $brand",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF3730A3)
+                                    )
+                                }
+                            }
+                        }
+                        items(detectedCapacities) { cap ->
+                            val filterKey = "CAPACITY:$cap"
+                            val isSelected = activeSpecFilter == filterKey
+                            Surface(
+                                onClick = { activeSpecFilter = if (isSelected) null else filterKey },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (isSelected) Color(0xFF065F46) else Color.White,
+                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF065F46) else Color(0xFFA7F3D0))
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
+                                ) {
+                                    Text(
+                                        text = "💾 $cap",
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) Color.White else Color(0xFF065F46)
+                                    )
+                                }
+                            }
+                        }
                         items(detectedChips) { chip ->
                             val isSelected = activeSpecFilter == chip
                             Surface(
@@ -295,7 +357,7 @@ fun SearchScreen(
                                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
                                 ) {
                                     Text(
-                                        text = "⚡ $chip",
+                                        text = chip,
                                         fontSize = 11.sp,
                                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                         color = if (isSelected) Color.White else Color(0xFF7E22CE)
@@ -310,34 +372,11 @@ fun SearchScreen(
 
         // Main content
         if (state.isSearching) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(
-                        color = AliExpressRed,
-                        strokeWidth = 3.dp,
-                        modifier = Modifier.size(38.dp)
-                    )
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Text(
-                        text = "Consultando AliExpress & Shopee com IA...",
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF1E293B)
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Inteligência Artificial ativada: analisando marca, modelo e ofertas em tempo real",
-                        fontSize = 11.5.sp,
-                        color = Color(0xFF64748B)
-                    )
-                }
-            }
-        } else if (state.errorMessage != null) {
+            SearchLoadingSplashScreen(
+                query = state.query,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else if (state.errorMessage != null && state.comparisonResult == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -351,7 +390,7 @@ fun SearchScreen(
                     Icon(
                         imageVector = Icons.Default.CloudOff,
                         contentDescription = null,
-                        tint = AliExpressRed,
+                        tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(48.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -371,7 +410,7 @@ fun SearchScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
                         onClick = { onSearch(state.query) },
-                        colors = ButtonDefaults.buttonColors(containerColor = AliExpressRed),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                         shape = RoundedCornerShape(20.dp)
                     ) {
                         Text("Tentar novamente", color = Color.White, fontWeight = FontWeight.Bold)
@@ -383,42 +422,37 @@ fun SearchScreen(
             if (result == null || (result.aliExpressProducts.isEmpty() && result.shopeeProducts.isEmpty())) {
                 EmptySearchState(
                     query = state.query,
-                    onSelectSuggestion = { term ->
-                        onQueryChanged(term)
-                        onSearch(term)
-                    },
-                    onVoiceSearchClick = startVoiceSearch
+                    onVoiceSearchClick = startVoiceSearch,
+                    onCategoryClick = onSearch
                 )
             } else {
-                val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter { p ->
-                    if (activeSpecFilter == "VERIFIED_ONLY") {
-                        p.sellerTrust?.isVerified == true
-                    } else {
-                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
-                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
-                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                val filterPredicate: (Product) -> Boolean = { p ->
+                    when {
+                        activeSpecFilter == null -> true
+                        activeSpecFilter == "VERIFIED_ONLY" -> p.sellerTrust?.isVerified == true
+                        activeSpecFilter!!.startsWith("BRAND:") -> {
+                            val targetBrand = activeSpecFilter!!.removePrefix("BRAND:")
+                            p.brand?.equals(targetBrand, ignoreCase = true) == true ||
+                                    p.title.contains(targetBrand, ignoreCase = true)
+                        }
+                        activeSpecFilter!!.startsWith("CAPACITY:") -> {
+                            val targetCap = activeSpecFilter!!.removePrefix("CAPACITY:")
+                            p.capacity?.contains(targetCap, ignoreCase = true) == true ||
+                                    p.title.contains(targetCap, ignoreCase = true)
+                        }
+                        else -> {
+                            val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
+                            p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
+                                    p.brand?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
+                                    p.capacity?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
+                                    p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                        }
                     }
-                }.ifEmpty { result.aliExpressProducts }
+                }
 
-                val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter { p ->
-                    if (activeSpecFilter == "VERIFIED_ONLY") {
-                        p.sellerTrust?.isVerified == true
-                    } else {
-                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
-                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
-                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
-                    }
-                }.ifEmpty { result.shopeeProducts }
-
-                val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter { p ->
-                    if (activeSpecFilter == "VERIFIED_ONLY") {
-                        p.sellerTrust?.isVerified == true
-                    } else {
-                        val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
-                        p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
-                                p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
-                    }
-                }.ifEmpty { result.unifiedSortedProducts }
+                val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter(filterPredicate).ifEmpty { result.aliExpressProducts }
+                val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter(filterPredicate).ifEmpty { result.shopeeProducts }
+                val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter(filterPredicate).ifEmpty { result.unifiedSortedProducts }
 
                 when (state.viewMode) {
                     ViewMode.SIDE_BY_SIDE -> {
@@ -621,10 +655,27 @@ private fun ComparisonHeaderBar(
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFFEEF2FF))
+                            .border(BorderStroke(0.5.dp, Color(0xFFC7D2FE)), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 7.dp, vertical = 3.5.dp)
+                    ) {
+                        Text(
+                            text = "Modo Profissional",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF3730A3),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 } else {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
-                            imageVector = Icons.Default.ElectricBolt,
+                            imageVector = Icons.Default.Compare,
                             contentDescription = null,
                             tint = Color(0xFF64748B),
                             modifier = Modifier.size(14.dp)
@@ -998,145 +1049,249 @@ private fun UnifiedListView(
 @Composable
 private fun EmptySearchState(
     query: String,
-    onSelectSuggestion: (String) -> Unit = {},
-    onVoiceSearchClick: () -> Unit = {}
+    onVoiceSearchClick: () -> Unit = {},
+    onCategoryClick: (String) -> Unit = {}
 ) {
-    val aiSuggestedSearches = listOf(
-        "Samsung Galaxy S24" to "📱 Celular",
-        "Placa-Mãe X99 MR9A PRO" to "🖥️ Hardware",
-        "Smart TV 55 4K UHD" to "📺 Telas",
-        "Notebook Dell Inspiron i7" to "💻 Laptops",
-        "Placa de Vídeo RTX 4060" to "🎮 GPU",
-        "Fone Bluetooth JBL ANC" to "🎧 Áudio",
-        "Smartwatch Amazfit AMOLED" to "⌚ Relógios",
-        "Tênis Nike Corrida" to "👟 Calçados",
-        "Drone 4K com GPS" to "🚁 Drones"
-    )
+    val trendingCategories = remember {
+        listOf(
+            "🎮 Mouse Gamer" to "Mouse Gamer",
+            "🎧 Fone Bluetooth" to "Fone Bluetooth",
+            "⌚ Smartwatch" to "Smartwatch",
+            "⌨️ Teclado Mecânico" to "Teclado Mecânico",
+            "📱 Smartphone" to "Smartphone",
+            "💾 SSD NVMe" to "SSD NVMe",
+            "🕹️ Controle / Gamepad" to "Controle Gamepad",
+            "🔋 Power Bank" to "Power Bank"
+        )
+    }
 
-    Box(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            // Elegant gradient icon circle
-            Box(
-                modifier = Modifier
-                    .size(76.dp)
-                    .clip(CircleShape)
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0xFFFFF1EE), Color(0xFFFFF2ED))
-                        )
-                    )
-                    .border(
-                        BorderStroke(1.dp, Color(0xFFFFD5CC)),
-                        CircleShape
-                    ),
-                contentAlignment = Alignment.Center
+        item {
+            // Elegant brand comparator badge
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color(0xFFFFF1EE),
+                border = BorderStroke(1.dp, Color(0xFFFFD5CC)),
+                modifier = Modifier.padding(bottom = 12.dp)
             ) {
-                Icon(
-                    imageVector = if (query.isEmpty()) Icons.Default.Search else Icons.Default.SearchOff,
-                    contentDescription = null,
-                    tint = if (query.isEmpty()) AliExpressRed else Color(0xFF64748B),
-                    modifier = Modifier.size(36.dp)
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(AliExpressRed)
+                    )
+                    Text(
+                        text = "AliExpress",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = AliExpressRed
+                    )
+                    Text(
+                        text = "⚔️",
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = "Shopee",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = ShopeeOrange
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(ShopeeOrange)
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        item {
             Text(
-                text = if (query.isEmpty()) "O que você quer comparar hoje?" else "Nenhum produto encontrado para \"$query\"",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
+                text = if (query.isEmpty()) "O que você deseja comparar hoje?" else "Nenhum produto encontrado para \"$query\"",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center,
                 color = Color(0xFF0F172A)
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = if (query.isEmpty()) 
-                    "Pesquise qualquer produto para comparar preços reais no AliExpress e na Shopee lado a lado."
-                else 
-                    "Verifique a ortografia ou tente termos mais genéricos.",
-                fontSize = 12.5.sp,
+                text = if (query.isEmpty())
+                    "Pesquise qualquer produto para ver preços reais, frete e estoque lado a lado nas duas plataformas."
+                else
+                    "Tente termos mais genéricos ou use uma das sugestões abaixo.",
+                fontSize = 13.sp,
                 color = Color(0xFF64748B),
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(horizontal = 12.dp)
             )
+            Spacer(modifier = Modifier.height(16.dp))
+        }
 
-            if (query.isEmpty()) {
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Direct Voice Search Action Button
+        if (query.isEmpty()) {
+            item {
+                // Voice search quick action
                 Surface(
                     onClick = onVoiceSearchClick,
-                    shape = RoundedCornerShape(22.dp),
-                    color = Color(0xFFFFF1EE),
-                    border = BorderStroke(1.dp, Color(0xFFFFD5CC)),
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    shadowElevation = 1.dp,
                     modifier = Modifier.testTag("empty_state_voice_search_button")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Mic,
-                            contentDescription = "Falar produto",
-                            tint = AliExpressRed,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFFFFF1EE)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Falar produto",
+                                tint = AliExpressRed,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "Falar nome do produto",
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = AliExpressRed
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0F172A)
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(24.dp))
             }
+        }
 
-            if (query.isEmpty()) {
-                Spacer(modifier = Modifier.height(20.dp))
-                Text(
-                    text = "✨ Sugestões Inteligentes da IA:",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF334155)
-                )
-                Spacer(modifier = Modifier.height(10.dp))
+        // Trending Categories section
+        item {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "🔥 Categorias Populares",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color(0xFF1E293B)
+                    )
+                    Text(
+                        text = "Toque para comparar",
+                        fontSize = 11.5.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+
+                // Grid of category chips
                 FlowRow(
-                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    aiSuggestedSearches.forEach { (term, category) ->
+                    trendingCategories.forEach { (displayLabel, searchVal) ->
                         Surface(
-                            modifier = Modifier
-                                .padding(horizontal = 3.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .clickable { onSelectSuggestion(term) },
+                            onClick = { onCategoryClick(searchVal) },
+                            shape = RoundedCornerShape(12.dp),
                             color = Color.White,
                             border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                            shape = RoundedCornerShape(16.dp)
+                            shadowElevation = 0.5.dp,
+                            modifier = Modifier.testTag("chip_trending_${searchVal.lowercase().replace(" ", "_")}")
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = term,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF1E293B)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = category,
-                                    fontSize = 9.5.sp,
-                                    color = Color(0xFF64748B)
-                                )
-                            }
+                            Text(
+                                text = displayLabel,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color(0xFF334155),
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+
+        // How it works feature cards
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFFF8FAFC)
+                ),
+                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Recursos do Comparador ScanShop",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("⚡", fontSize = 16.sp)
+                        Column {
+                            Text(
+                                text = "Busca Simultânea em Tempo Real",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B)
+                            )
+                            Text(
+                                text = "Consulta preços e estoques oficiais no AliExpress e Shopee",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
+                        }
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("📉", fontSize = 16.sp)
+                        Column {
+                            Text(
+                                text = "Alerta de Queda > 10% nos Favoritos",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF1E293B)
+                            )
+                            Text(
+                                text = "Notificação no celular assim que o produto salvo sofrer redução",
+                                fontSize = 11.sp,
+                                color = Color(0xFF64748B)
+                            )
                         }
                     }
                 }

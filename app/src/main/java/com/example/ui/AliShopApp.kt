@@ -85,6 +85,8 @@ fun AliShopApp(
     val dealsState by viewModel.dealsState.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val favoriteIds by viewModel.favoriteIds.collectAsState()
+    val isCheckingPrices by viewModel.isCheckingPrices.collectAsState()
+    val priceCheckSummary by viewModel.priceCheckSummary.collectAsState()
 
     val navItems = listOf(
         BottomNavItem(
@@ -222,7 +224,11 @@ fun AliShopApp(
                 2 -> FavoritesScreen(
                     favorites = favorites,
                     onRemoveFavorite = viewModel::removeFavorite,
-                    onNavigateToSearch = { viewModel.selectTab(0) }
+                    onNavigateToSearch = { viewModel.selectTab(0) },
+                    isCheckingPrices = isCheckingPrices,
+                    lastSummary = priceCheckSummary,
+                    onCheckPricesNow = viewModel::checkFavoritePrices,
+                    onSimulateDrop = viewModel::simulatePriceDrop
                 )
                 3 -> AboutScreen(
                     onNavigateToSearch = { viewModel.selectTab(0) },
@@ -297,30 +303,37 @@ fun AliShopTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color(0xFFF1F5F9))
-                        .border(BorderStroke(0.5.dp, Color(0xFFCBD5E1)), RoundedCornerShape(16.dp))
-                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFF8FAFC),
+                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+                    modifier = Modifier.testTag("badge_live_comparison")
                 ) {
                     Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
+                        // Brand dots
                         Box(
                             modifier = Modifier
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(DealGreen)
+                                .background(AliExpressRed)
                         )
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(ShopeeOrange)
+                        )
+                        Spacer(modifier = Modifier.width(1.dp))
                         Text(
-                            text = "Ali vs Shopee",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF334155),
-                            maxLines = 1,
-                            softWrap = false
+                            text = "AO VIVO",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = DealGreen,
+                            maxLines = 1
                         )
                     }
                 }

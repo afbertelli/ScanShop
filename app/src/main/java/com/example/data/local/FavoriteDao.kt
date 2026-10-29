@@ -22,4 +22,13 @@ interface FavoriteDao {
 
     @Query("SELECT COUNT(*) FROM favorite_products")
     fun getFavoriteCount(): Flow<Int>
+
+    @Query("SELECT * FROM favorite_products ORDER BY savedAtTimestamp DESC")
+    suspend fun getAllFavoritesList(): List<FavoriteProductEntity>
+
+    @Query("SELECT * FROM favorite_products WHERE id = :id LIMIT 1")
+    suspend fun getFavoriteById(id: String): FavoriteProductEntity?
+
+    @Query("UPDATE favorite_products SET promoPrice = :newPrice, priceDropPercentage = :dropPercent, hasPriceDropAlert = :hasAlert, lastNotifiedPrice = :newPrice, lastCheckedTimestamp = :timestamp WHERE id = :id")
+    suspend fun updatePriceDrop(id: String, newPrice: Double, dropPercent: Double, hasAlert: Boolean, timestamp: Long)
 }
