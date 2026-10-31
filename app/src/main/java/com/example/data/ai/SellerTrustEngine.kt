@@ -48,41 +48,44 @@ object SellerTrustEngine {
         var score = 48
 
         // 3. Avaliação da Reputação (Rating do Vendedor)
+        val pRating = product.rating
         val rating = when {
-            product.rating > 5.0 -> (product.rating / 20.0).coerceIn(1.0, 5.0)
-            product.rating > 0.0 -> product.rating
-            else -> 4.8
+            pRating == null || pRating <= 0.0 -> null
+            pRating > 5.0 -> (pRating / 20.0).coerceIn(1.0, 5.0)
+            else -> pRating
         }
 
-        when {
-            rating >= 4.9 -> {
-                score += 26
-                reasons.add("Reputação de excelência máxima (★ %.1f)".format(Locale.US, rating))
-            }
-            rating >= 4.8 -> {
-                score += 22
-                reasons.add("Excelente avaliação dos compradores (★ %.1f)".format(Locale.US, rating))
-            }
-            rating >= 4.7 -> {
-                score += 18
-                reasons.add("Boa média de avaliações positivas (★ %.1f)".format(Locale.US, rating))
-            }
-            rating >= 4.5 -> {
-                score += 13
-                reasons.add("Avaliações favoráveis (★ %.1f)".format(Locale.US, rating))
-            }
-            rating >= 4.0 -> {
-                score += 6
-                reasons.add("Avaliação média satisfatória (★ %.1f)".format(Locale.US, rating))
-            }
-            else -> {
-                score -= 15
-                reasons.add("Atenção: nota abaixo da média recomendada")
+        if (rating != null) {
+            when {
+                rating >= 4.9 -> {
+                    score += 26
+                    reasons.add("Reputação de excelência máxima (★ %.1f)".format(Locale.US, rating))
+                }
+                rating >= 4.8 -> {
+                    score += 22
+                    reasons.add("Excelente avaliação dos compradores (★ %.1f)".format(Locale.US, rating))
+                }
+                rating >= 4.7 -> {
+                    score += 18
+                    reasons.add("Boa média de avaliações positivas (★ %.1f)".format(Locale.US, rating))
+                }
+                rating >= 4.5 -> {
+                    score += 13
+                    reasons.add("Avaliações favoráveis (★ %.1f)".format(Locale.US, rating))
+                }
+                rating >= 4.0 -> {
+                    score += 6
+                    reasons.add("Avaliação média satisfatória (★ %.1f)".format(Locale.US, rating))
+                }
+                else -> {
+                    score -= 15
+                    reasons.add("Atenção: nota abaixo da média recomendada")
+                }
             }
         }
 
         // 4. Volume Histórico de Vendas Concluídas
-        val sales = product.salesCount
+        val sales = product.salesCount ?: 0
         when {
             sales >= 5000 -> {
                 score += 20
@@ -156,11 +159,12 @@ object SellerTrustEngine {
             SellerBadgeType.STANDARD -> "Vendedor Padrão"
         }
 
+        val r = rating ?: 0.0
         val positivePercent = when {
-            rating >= 4.9 -> 99
-            rating >= 4.8 -> 98
-            rating >= 4.7 -> 96
-            rating >= 4.5 -> 94
+            r >= 4.9 -> 99
+            r >= 4.8 -> 98
+            r >= 4.7 -> 96
+            r >= 4.5 -> 94
             else -> 89
         }
 
@@ -170,7 +174,7 @@ object SellerTrustEngine {
             isVerified = isVerified,
             badgeText = badgeText,
             badgeType = badgeType,
-            rating = rating,
+            rating = rating ?: 0.0,
             salesCount = sales,
             positiveRatingPercent = positivePercent,
             hasDeliveryGuarantee = product.freeShipping || isOfficialStore,

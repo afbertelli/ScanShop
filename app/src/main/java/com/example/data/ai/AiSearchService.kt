@@ -6,6 +6,8 @@ import com.example.data.model.ComparisonResult
 import com.example.data.model.Product
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.data.repository.QueryIntentEngine
+import com.example.data.repository.RelevanceGate
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -1818,18 +1820,15 @@ class AiSearchService {
                     (modelTokens.isNotEmpty() && modelTokens.all { normTitle.contains(it) })
 
             if (!modelMatched) {
-                val numericTokens = modelTokens.filter { it.any { ch -> ch.isDigit() } }
-                if (numericTokens.isNotEmpty() && !numericTokens.any { normTitle.contains(it) }) {
-                    return ProductAiEvaluation(
-                        isGenuineMatch = false,
-                        isAccessoryOrPart = false,
-                        isGenderConflict = false,
-                        brandMatched = brandMatched,
-                        categoryMatched = categoryMatched,
-                        modelMatched = false,
-                        relevanceScore = 20
-                    )
-                }
+                return ProductAiEvaluation(
+                    isGenuineMatch = false,
+                    isAccessoryOrPart = false,
+                    isGenderConflict = false,
+                    brandMatched = brandMatched,
+                    categoryMatched = categoryMatched,
+                    modelMatched = false,
+                    relevanceScore = 0
+                )
             }
             identifiedModel = insight.detectedModel
         }
@@ -1908,81 +1907,18 @@ class AiSearchService {
     /**
      * Validador Semântico de Título do Produto
      */
+    /**
+     * Validador Semântico de Título do Produto baseado no RelevanceGate.
+     */
     fun matchesProductTitle(
         cleanTitle: String,
         cleanQuery: String,
         insight: AiSearchInsight,
         price: Double = 0.0
     ): Boolean {
-        val normTitle = normalizeText(cleanTitle)
-        val normQuery = normalizeText(cleanQuery)
-        if (normQuery.isEmpty()) return true
-
-        // Verifica acessório ou conflito de gênero
-        if (isAccessoryOrPart(cleanTitle, price, insight.categoryKey, insight.isAccessoryIntent)) {
-            return false
-        }
-        if (isGenderConflict(insight.targetGender, cleanTitle)) {
-            return false
-        }
-
-        // 1. Categoria
-        if (insight.categoryKey != null) {
-            val synonyms = CATEGORY_SYNONYMS[insight.categoryKey] ?: emptySet()
-            val categoryMatched = synonyms.any { normTitle.contains(it) }
-            if (!categoryMatched) return false
-        }
-
-        // 2. Marca
-        if (insight.brandAliases.isNotEmpty()) {
-            val brandMatched = insight.brandAliases.any { alias ->
-                val r = Regex("\\b${Regex.escape(alias)}\\b", RegexOption.IGNORE_CASE)
-                r.containsMatchIn(normTitle) || normTitle.contains(alias)
-            }
-            if (!brandMatched) return false
-        }
-
-        // 3. Modelo
-        if (!insight.detectedModel.isNullOrBlank()) {
-            val modelLower = normalizeText(insight.detectedModel)
-            val modelCondensed = modelLower.replace(" ", "")
-            val titleCondensed = normTitle.replace(" ", "")
-            val modelTokens = modelLower.split("\\s+".toRegex()).filter { it.length >= 2 }
-
-            val modelMatched = titleCondensed.contains(modelCondensed) ||
-                    (modelTokens.isNotEmpty() && modelTokens.all { normTitle.contains(it) })
-
-            if (!modelMatched) {
-                val numericTokens = modelTokens.filter { it.any { ch -> ch.isDigit() } }
-                if (numericTokens.isNotEmpty() && !numericTokens.any { normTitle.contains(it) }) {
-                    return false
-                }
-            }
-            return true
-        }
-
-        if (insight.categoryKey != null || insight.brandAliases.isNotEmpty() || insight.targetGender != null) {
-            return true
-        }
-
-        // Fallback genérico para termos soltos
-        val tokens = normQuery.split("\\s+".toRegex()).filter { it.length >= 2 }
-        if (tokens.isEmpty()) return true
-
-        val matchedCount = tokens.count { token ->
-            val singular = if (token.endsWith("s") && token.length > 3) token.dropLast(1) else token
-            val plural = if (!token.endsWith("s")) "${token}s" else token
-            val r = Regex("\\b(${Regex.escape(token)}|${Regex.escape(singular)}|${Regex.escape(plural)})\\b", RegexOption.IGNORE_CASE)
-            r.containsMatchIn(normTitle) || normTitle.contains(token)
-        }
-
-        if (tokens.size == 2) {
-            val combined = tokens[0] + tokens[1]
-            val revCombined = tokens[1] + tokens[0]
-            return matchedCount == 2 || normTitle.contains(combined) || normTitle.contains(revCombined)
-        }
-
-        return matchedCount >= (tokens.size - 1).coerceAtLeast(1)
+        val intent = QueryIntentEngine.parseQueryIntent(cleanQuery)
+        val gateResult = RelevanceGate.evaluate(title = cleanTitle, price = price, query = cleanQuery, intent = intent)
+        return gateResult.isApproved
     }
 
     /**
@@ -1998,20 +1934,22 @@ class AiSearchService {
             analyzeLocal(query)
         }
 
-        val hasSpecificTarget = insight.detectedBrand != null || insight.categoryKey != null || insight.detectedModel != null
+        val intent = QueryIntentEngine.parseQueryIntent(query)
 
         var filteredAccessories = 0
         val refinedAli = baseResult.aliExpressProducts.mapNotNull { prod ->
             val eval = evaluateProduct(prod, insight)
+            val gateResult = RelevanceGate.evaluate(prod, query, intent)
             val brandMismatch = insight.detectedBrand != null && !eval.brandMatched
             val categoryMismatch = insight.categoryKey != null && !eval.categoryMatched
-            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch) {
+            val modelMismatch = (insight.detectedModel != null || intent.detectedHardwareModel != null) && !eval.modelMatched
+            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch || modelMismatch || !gateResult.isApproved) {
                 filteredAccessories++
                 null
             } else {
                 val trust = eval.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
                 prod.copy(
-                    isExactAiMatch = eval.isGenuineMatch,
+                    isExactAiMatch = eval.isGenuineMatch && gateResult.isApproved,
                     aiMatchBadge = eval.badgeLabel,
                     aiGender = eval.aiGender,
                     technicalSpecs = eval.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
@@ -2024,15 +1962,17 @@ class AiSearchService {
 
         val refinedShopee = baseResult.shopeeProducts.mapNotNull { prod ->
             val eval = evaluateProduct(prod, insight)
+            val gateResult = RelevanceGate.evaluate(prod, query, intent)
             val brandMismatch = insight.detectedBrand != null && !eval.brandMatched
             val categoryMismatch = insight.categoryKey != null && !eval.categoryMatched
-            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch) {
+            val modelMismatch = (insight.detectedModel != null || intent.detectedHardwareModel != null) && !eval.modelMatched
+            if (eval.isAccessoryOrPart || eval.isGenderConflict || brandMismatch || categoryMismatch || modelMismatch || !gateResult.isApproved) {
                 filteredAccessories++
                 null
             } else {
                 val trust = eval.sellerTrust ?: SellerTrustEngine.evaluateSeller(prod, query)
                 prod.copy(
-                    isExactAiMatch = eval.isGenuineMatch,
+                    isExactAiMatch = eval.isGenuineMatch && gateResult.isApproved,
                     aiMatchBadge = eval.badgeLabel,
                     aiGender = eval.aiGender,
                     technicalSpecs = eval.technicalSpecs ?: NeuralSpecEngine.extractSpecsFromProduct(prod.title, prod.promoPrice, insight.technicalSpecs),
@@ -2045,65 +1985,8 @@ class AiSearchService {
 
         val updatedInsight = insight.copy(filteredAccessoriesCount = filteredAccessories)
 
-        val finalAli = if (refinedAli.size >= 35) {
-            refinedAli.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
-        } else {
-            val seen = refinedAli.map { it.id }.toMutableSet()
-            val combined = refinedAli.toMutableList()
-            for (p in baseResult.aliExpressProducts) {
-                if (seen.add(p.id)) {
-                    val eval = evaluateProduct(p, insight)
-                    if (!eval.isAccessoryOrPart && !eval.isGenderConflict) {
-                        val trust = p.sellerTrust ?: SellerTrustEngine.evaluateSeller(p, query)
-                        combined.add(p.copy(
-                            isExactAiMatch = false,
-                            aiMatchScore = 85,
-                            aiConfidenceBadge = "85% Compatível",
-                            sellerTrust = trust
-                        ))
-                    }
-                }
-            }
-            if (combined.size < 35) {
-                for (p in baseResult.aliExpressProducts) {
-                    if (seen.add(p.id)) {
-                        combined.add(p)
-                    }
-                    if (combined.size >= 50) break
-                }
-            }
-            combined.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
-        }
-
-        val finalShopee = if (refinedShopee.size >= 35) {
-            refinedShopee.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
-        } else {
-            val seen = refinedShopee.map { it.id }.toMutableSet()
-            val combined = refinedShopee.toMutableList()
-            for (p in baseResult.shopeeProducts) {
-                if (seen.add(p.id)) {
-                    val eval = evaluateProduct(p, insight)
-                    if (!eval.isAccessoryOrPart && !eval.isGenderConflict) {
-                        val trust = p.sellerTrust ?: SellerTrustEngine.evaluateSeller(p, query)
-                        combined.add(p.copy(
-                            isExactAiMatch = false,
-                            aiMatchScore = 85,
-                            aiConfidenceBadge = "85% Compatível",
-                            sellerTrust = trust
-                        ))
-                    }
-                }
-            }
-            if (combined.size < 35) {
-                for (p in baseResult.shopeeProducts) {
-                    if (seen.add(p.id)) {
-                        combined.add(p)
-                    }
-                    if (combined.size >= 50) break
-                }
-            }
-            combined.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
-        }
+        val finalAli = refinedAli.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        val finalShopee = refinedShopee.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
 
         val combined = (finalAli + finalShopee).sortedWith(
             compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice }

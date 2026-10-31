@@ -139,13 +139,21 @@ object BrandModelDetector {
         "cartao", "smart", "relogio", "tenis", "camisa", "fone", "fone de ouvido", "celular",
         "smartphone", "oficial", "versao global", "global version", "promocao", "frete gratis",
         "envio imediato", "pronta entrega", "brasil", "estoque", "capa", "capinha", "pelicula",
-        "pulseira", "suporte", "gamer", "pro", "ultra", "max", "plus", "lite"
+        "pulseira", "suporte", "gamer", "pro", "ultra", "max", "plus", "lite",
+        "mouse", "rato", "teclado", "fones", "mae", "video", "tv", "smarttv", "televisor",
+        "cafeteira", "sapato", "bluetooth", "wireless", "caixa", "som", "cooler", "fonte",
+        "gabinete", "memoria", "ssd", "monitor", "computador", "processador", "drone", "tablet"
     )
+
+    fun isKnownBrand(name: String): Boolean {
+        val n = norm(name)
+        return MASTER_BRANDS.any { it.canonical.equals(name, ignoreCase = true) || it.aliases.any { a -> norm(a) == n } }
+    }
 
     /**
      * Detecta a Marca exata a partir do título do produto com precisão profissional
      */
-    fun detectBrand(title: String): String? {
+    fun detectBrand(title: String, isQuery: Boolean = false): String? {
         val clean = norm(title)
 
         // 1. Busca por correspondência exata de alias com limites estritos de palavras (longest match first)
@@ -157,6 +165,9 @@ object BrandModelDetector {
                 }
             }
         }
+
+        // Se for consulta de busca, NUNCA adivinhe marca a partir da primeira palavra
+        if (isQuery) return null
 
         // 2. Extração heurística da primeira palavra apenas se não for palavra genérica de parada
         val tokens = title.trim().split("\\s+".toRegex()).filter { it.length >= 3 }

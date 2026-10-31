@@ -165,7 +165,8 @@ fun CompactProductCard(
                 }
 
                 // Discount badge bottom-left
-                if (product.discountPercentage > 0) {
+                val discountVal = product.discountPercentage
+                if (discountVal != null && discountVal > 0) {
                     Box(
                         modifier = Modifier
                             .align(Alignment.BottomStart)
@@ -175,7 +176,7 @@ fun CompactProductCard(
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "-${product.discountPercentage}%",
+                            text = "-$discountVal%",
                             color = Color.White,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
@@ -267,9 +268,10 @@ fun CompactProductCard(
                         maxLines = 1,
                         softWrap = false
                     )
-                    if (product.originalPrice > product.promoPrice) {
+                    val origPrice = product.originalPrice
+                    if (origPrice != null && origPrice > product.promoPrice && product.formattedOriginalPrice != null) {
                         Text(
-                            text = product.formattedOriginalPrice,
+                            text = product.formattedOriginalPrice!!,
                             fontSize = 10.5.sp,
                             color = Color(0xFF94A3B8),
                             textDecoration = TextDecoration.LineThrough,
@@ -287,37 +289,50 @@ fun CompactProductCard(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
+                    val pRating = product.rating
                     val ratingValue = when {
-                        product.rating > 5.0 -> (product.rating / 20.0).coerceIn(1.0, 5.0)
-                        product.rating > 0.0 -> product.rating
-                        else -> 4.8
+                        pRating == null || pRating <= 0.0 -> null
+                        pRating > 5.0 -> (pRating / 20.0).coerceIn(1.0, 5.0)
+                        else -> pRating
                     }
-                    val formattedRating = String.format(java.util.Locale.US, "%.1f", ratingValue)
+                    val formattedRating = ratingValue?.let { String.format(java.util.Locale.US, "%.1f", it) }
+                    val pSales = product.salesCount
                     val salesText = when {
-                        product.salesCount >= 1000 -> "${product.salesCount / 1000}k"
-                        product.salesCount > 0 -> "${product.salesCount}"
-                        else -> "100+"
+                        pSales == null || pSales <= 0 -> null
+                        pSales >= 1000 -> "${pSales / 1000}k"
+                        else -> "$pSales"
                     }
 
-                    // Avaliação e vendas compacto (encolhe se a tela for estreita)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Avaliação",
-                            tint = GoldStar,
-                            modifier = Modifier.size(10.5.dp)
-                        )
-                        Text(
-                            text = "$formattedRating ($salesText)",
-                            fontSize = 10.sp,
-                            color = Color(0xFF64748B),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    // Avaliação e vendas compacto (apenas quando disponíveis na API)
+                    if (formattedRating != null || salesText != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
+                            if (formattedRating != null) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "Avaliação",
+                                    tint = GoldStar,
+                                    modifier = Modifier.size(10.5.dp)
+                                )
+                            }
+                            val metaText = when {
+                                formattedRating != null && salesText != null -> "$formattedRating ($salesText)"
+                                formattedRating != null -> formattedRating
+                                else -> "$salesText vend."
+                            }
+                            Text(
+                                text = metaText,
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f, fill = false))
                     }
 
                     Spacer(modifier = Modifier.width(4.dp))
@@ -528,17 +543,19 @@ fun UnifiedProductCard(
                             fontWeight = FontWeight.ExtraBold,
                             color = storeColor
                         )
-                        if (product.discountPercentage > 0) {
+                        val disc = product.discountPercentage
+                        if (disc != null && disc > 0) {
                             Text(
-                                text = "-${product.discountPercentage}%",
+                                text = "-$disc%",
                                 fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = DiscountBadge
                             )
                         }
-                        if (product.originalPrice > product.promoPrice) {
+                        val origPrice = product.originalPrice
+                        if (origPrice != null && origPrice > product.promoPrice && product.formattedOriginalPrice != null) {
                             Text(
-                                text = product.formattedOriginalPrice,
+                                text = product.formattedOriginalPrice!!,
                                 fontSize = 10.sp,
                                 color = Color.Gray,
                                 textDecoration = TextDecoration.LineThrough
@@ -549,33 +566,44 @@ fun UnifiedProductCard(
                     Spacer(modifier = Modifier.height(3.dp))
 
                     // Clean Info Row: Avaliação + Única info Loja Oficial
+                    val pRating = product.rating
+                    val ratingValue = when {
+                        pRating == null || pRating <= 0.0 -> null
+                        pRating > 5.0 -> (pRating / 20.0).coerceIn(1.0, 5.0)
+                        else -> pRating
+                    }
+                    val formattedRating = ratingValue?.let { String.format(java.util.Locale.US, "%.1f", it) }
+                    val pSales = product.salesCount
+                    val salesText = when {
+                        pSales == null || pSales <= 0 -> null
+                        pSales >= 1000 -> "${pSales / 1000}k"
+                        else -> "$pSales"
+                    }
+
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        val ratingValue = when {
-                            product.rating > 5.0 -> (product.rating / 20.0).coerceIn(1.0, 5.0)
-                            product.rating > 0.0 -> product.rating
-                            else -> 4.8
+                        if (formattedRating != null || salesText != null) {
+                            if (formattedRating != null) {
+                                Icon(
+                                    imageVector = Icons.Default.Star,
+                                    contentDescription = "Avaliação",
+                                    tint = GoldStar,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                            }
+                            val metaText = when {
+                                formattedRating != null && salesText != null -> "$formattedRating • $salesText vend."
+                                formattedRating != null -> formattedRating
+                                else -> "$salesText vend."
+                            }
+                            Text(
+                                text = metaText,
+                                fontSize = 10.sp,
+                                color = Color(0xFF64748B)
+                            )
                         }
-                        val formattedRating = String.format(java.util.Locale.US, "%.1f", ratingValue)
-                        val salesText = when {
-                            product.salesCount >= 1000 -> "${product.salesCount / 1000}k"
-                            product.salesCount > 0 -> "${product.salesCount}"
-                            else -> "100+"
-                        }
-
-                        Icon(
-                            imageVector = Icons.Default.Star,
-                            contentDescription = "Avaliação",
-                            tint = GoldStar,
-                            modifier = Modifier.size(11.dp)
-                        )
-                        Text(
-                            text = "$formattedRating • $salesText vend.",
-                            fontSize = 10.sp,
-                            color = Color(0xFF64748B)
-                        )
 
                         // Indicação de Loja Oficial no quadro verde
                         val isOfficial = product.store == StoreType.ALIEXPRESS ||
@@ -858,7 +886,7 @@ fun FavoriteProductCard(
                                     color = Color.White
                                 )
                             }
-                        } else if (product.discountPercentage > 0) {
+                        } else if ((product.discountPercentage ?: 0) > 0) {
                             Text(
                                 text = "-${product.discountPercentage}% OFF",
                                 fontSize = 10.5.sp,

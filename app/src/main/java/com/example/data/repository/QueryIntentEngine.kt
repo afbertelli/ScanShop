@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import com.example.data.ai.BilingualSearchTranslationEngine
+import com.example.data.ai.BrandModelDetector
 import com.example.data.ai.NeuralSpecEngine
 import com.example.data.ai.SellerTrustEngine
 import com.example.data.model.Product
@@ -46,7 +47,8 @@ object QueryIntentEngine {
         "bracket", "espelho traseiro", "dissipador", "pasta termica", "extensor",
         "conversor", "receptor", "dongle", "antena", "controle remoto",
         "mouse pad", "mousepad", "desk pad", "deskpad", "tapete",
-        "kit mobilador", "mobilador", "keycap", "keycaps", "switch avulso", "switches avulsos"
+        "kit mobilador", "mobilador", "keycap", "keycaps", "switch avulso", "switches avulsos",
+        "cadarco", "cadarcos", "palmilha", "palmilhas"
     )
 
     val SYNONYM_GROUPS: List<Set<String>> = listOf(
@@ -295,7 +297,7 @@ object QueryIntentEngine {
                 "bolsa para mouse", "capa para mouse", "cosplay", "pelucia", "boneco", "suporte de mouse",
                 "encoder", "micro switch"
             ),
-            requiredIndicators = listOf("mouse", "mice", "rato")
+            requiredIndicators = listOf("mouse", "mice", "rato", "g502", "g305", "g203", "g403", "g pro", "deathadder", "viper", "dragonfly", "attack shark")
         ),
         CategoryDef(
             key = "teclado",
@@ -475,7 +477,10 @@ object QueryIntentEngine {
         }
 
         val neuralSpecs = NeuralSpecEngine.extractSpecsFromQuery(cleaned)
-        val finalBrand = detectedBrand ?: neuralSpecs.brand?.takeIf { it != "Oficial" && it != "Gamer / OEM" }
+        val finalBrand = detectedBrand ?: neuralSpecs.brand?.takeIf {
+            it != "Oficial" && it != "Gamer / OEM" &&
+                    (KNOWN_BRANDS.containsKey(it.lowercase(Locale.ROOT)) || BrandModelDetector.isKnownBrand(it))
+        }
         val finalHardwareModel = detectedHardwareModel ?: neuralSpecs.model
 
         val keywords = mutableListOf<String>()
@@ -631,9 +636,13 @@ object QueryIntentEngine {
             brandAliases = brandAliases,
             detectedCategory = matchedCatDef?.key,
             detectedHardwareModel = finalHardwareModel,
-            detectedSubModel = neuralSpecs.subModelOrPartNumber,
+            detectedSubModel = neuralSpecs.subModelOrPartNumber?.takeIf { sm ->
+                !sm.contains("Edição", ignoreCase = true) &&
+                !sm.contains("Série", ignoreCase = true) &&
+                sm.any { it.isDigit() }
+            },
             isTechDevice = matchedCatDef?.isTechDevice ?: (neuralSpecs.productType != null),
-            minPriceGuard = 0.0,
+            minPriceGuard = matchedCatDef?.minPriceGuard ?: 0.0,
             keywords = keywords.distinct(),
             accessoryFilterTerms = matchedCatDef?.accessoryFilter ?: emptyList(),
             requiredCategoryIndicators = matchedCatDef?.requiredIndicators ?: emptyList(),
@@ -642,25 +651,8 @@ object QueryIntentEngine {
     }
 
     fun isAcceptableCandidate(prod: Product, intent: QueryIntent): Boolean {
-        val normTitle = prod.title.lowercase(Locale.ROOT)
-        val unaccentedTitle = Normalizer.normalize(normTitle, Normalizer.Form.NFD)
-            .replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
-
-        // 1. Rejeição de lixo irrelevante absoluto
-        val spuriousJunk = listOf(
-            "moletom", "vestido", "calcinha", "sutia", "barco", "carburador", "rele de guarnicao",
-            "motor de barco", "boneca", "pelucia", "motocicleta", "compactador de placas"
-        )
-        if (spuriousJunk.any { unaccentedTitle.contains(it) && !intent.cleanedQuery.contains(it) }) {
-            return false
-        }
-
-        // 2. Proteção Universal e Específica contra Acessórios e Falsos Amigos para todos os produtos
-        if (BilingualSearchTranslationEngine.isFalseFriendAccessory(unaccentedTitle, intent.detectedCategory)) {
-            return false
-        }
-
-        return true
+        val gateResult = RelevanceGate.evaluate(prod, intent.cleanedQuery, intent)
+        return gateResult.isApproved
     }
 
     fun normalizeResultSet(products: List<Product>, intent: QueryIntent): List<Product> {

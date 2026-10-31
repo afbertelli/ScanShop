@@ -44,15 +44,15 @@ object NeuralSpecEngine {
      * Extrai especificações completas de uma consulta do usuário
      */
     fun extractSpecsFromQuery(query: String): ProductTechnicalSpecs {
-        val detectedBrand = BrandModelDetector.detectBrand(query)
+        val detectedBrand = BrandModelDetector.detectBrand(query, isQuery = true)
         val detectedModel = BrandModelDetector.detectModel(query, detectedBrand)
         val detectedType = BrandModelDetector.detectProductType(query)
         val base = parseHeuristicSpecs(query, price = 0.0, isQuery = true)
         val enriched = extractDynamicUniversalSpecs(query, base)
         return enriched.copy(
             productType = if (base.productType != "Eletrônicos & Consumo Inteligente") base.productType else detectedType,
-            brand = detectedBrand ?: enriched.brand,
-            model = detectedModel ?: enriched.model
+            brand = detectedBrand,
+            model = detectedModel
         )
     }
 

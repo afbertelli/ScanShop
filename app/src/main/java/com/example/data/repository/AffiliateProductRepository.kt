@@ -85,32 +85,38 @@ class AffiliateProductRepository {
 
     private fun getShopeeAppId(): String {
         val id = try { BuildConfig.SHOPEE_APP_ID } catch (e: Exception) { "" }
-        return if (id.isNotBlank() && id != "YOUR_SHOPEE_APP_ID") id else "18380240153"
+        return if (id.isNotBlank() && id != "YOUR_SHOPEE_APP_ID") id else ""
     }
 
     private fun getShopeeSecret(): String {
         val s = try { BuildConfig.SHOPEE_SECRET } catch (e: Exception) { "" }
-        return if (s.isNotBlank() && s != "YOUR_SHOPEE_SECRET") s else "REBDCUCQHYRPSQZDHJXPWOQVHMDGGBCC"
+        return if (s.isNotBlank() && s != "YOUR_SHOPEE_SECRET") s else ""
     }
 
     private fun getAliAppKey(): String {
         val k = try { BuildConfig.ALI_APP_KEY } catch (e: Exception) { "" }
-        return if (k.isNotBlank() && k != "YOUR_ALI_APP_KEY") k else "549668"
+        return if (k.isNotBlank() && k != "YOUR_ALI_APP_KEY") k else ""
     }
 
     private fun getAliAppSecret(): String {
         val s = try { BuildConfig.ALI_APP_SECRET } catch (e: Exception) { "" }
-        return if (s.isNotBlank() && s != "YOUR_ALI_APP_SECRET") s else "RRiMygy03HzReKV6eW66PExB1XOYwXoE"
+        return if (s.isNotBlank() && s != "YOUR_ALI_APP_SECRET") s else ""
     }
 
     private fun getAliTrackingId(): String {
         val t = try { BuildConfig.ALI_TRACKING_ID } catch (e: Exception) { "" }
-        return if (t.isNotBlank() && t != "YOUR_ALI_TRACKING_ID") t else "ScanShop"
+        return if (t.isNotBlank() && t != "YOUR_ALI_TRACKING_ID") t else ""
+    }
+
+    fun hasConfiguredApiKeys(): Boolean {
+        val hasShopee = getShopeeAppId().isNotBlank() && getShopeeSecret().isNotBlank()
+        val hasAli = getAliAppKey().isNotBlank() && getAliAppSecret().isNotBlank()
+        return hasShopee || hasAli
     }
 
     /**
      * Busca produtos em tempo real consultando em paralelo a Shopee e o AliExpress.
-     * Utiliza cache em memória de 5 minutos para velocidade instantânea (0ms em repetições).
+     * Utiliza cache em memória de curta duração para velocidade instantânea (0ms em repetições).
      */
     suspend fun searchProducts(
         query: String,
@@ -127,13 +133,23 @@ class AffiliateProductRepository {
             )
         }
 
+        val hasShopeeKeys = getShopeeAppId().isNotBlank() && getShopeeSecret().isNotBlank()
+        val hasAliKeys = getAliAppKey().isNotBlank() && getAliAppSecret().isNotBlank()
+        if (!hasShopeeKeys && !hasAliKeys) {
+            safeLog(TAG, "Configure as chaves de API no .env")
+            return@withContext ComparisonResult(
+                query = trimmed,
+                aliExpressProducts = emptyList(),
+                shopeeProducts = emptyList(),
+                unifiedSorted = emptyList()
+            )
+        }
+
         val cacheKey = "$trimmed|${filter.name}"
         if (!forceRefresh) {
             val cached = searchCache[cacheKey]
             if (cached != null && (System.currentTimeMillis() - cached.first) < CACHE_TTL_MS) {
-                if (cached.second.unifiedSorted.size >= 35) {
-                    return@withContext cached.second
-                }
+                return@withContext cached.second
             }
         }
 
@@ -359,38 +375,46 @@ class AffiliateProductRepository {
                 val rawPrice = node.optDouble("price", 0.0)
                 val priceMin = node.optDouble("priceMin", 0.0)
                 val promoPrice = if (priceMin > 0) priceMin else rawPrice
-                val originalPrice = if (rawPrice > promoPrice) rawPrice else (promoPrice * 1.25)
-                val rating = node.optDouble("ratingStar", 4.7)
-                val sales = node.optInt("sales", 150)
+                if (name.isBlank() || promoPrice <= 0.0) continue
+
+                val originalPrice = if (rawPrice > promoPrice) (rawPrice * 100.0).roundToInt() / 100.0 else null
+                val rating = if (node.has("ratingStar") && !node.isNull("ratingStar")) {
+                    node.optDouble("ratingStar").takeIf { it > 0.0 }?.let { (it * 10.0).roundToInt() / 10.0 }
+                } else null
+                val sales = if (node.has("sales") && !node.isNull("sales")) {
+                    node.optInt("sales").takeIf { it >= 0 }
+                } else null
                 val productLink = node.optString("productLink", "")
                 val offerLink = node.optString("offerLink", productLink)
                 val discountRate = node.optInt("priceDiscountRate", 0)
-                val discount = if (discountRate > 0) discountRate else (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(0, 90)
+                val discount = if (discountRate > 0) {
+                    discountRate
+                } else if (originalPrice != null && originalPrice > promoPrice) {
+                    (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(1, 99)
+                } else null
 
-                if (name.isNotBlank() && promoPrice > 0) {
-                    val cleanName = BilingualSearchTranslationEngine.translateAndCleanTitle(name)
-                    products.add(
-                        Product(
-                            id = "shp_$itemId",
-                            store = StoreType.SHOPEE,
-                            title = cleanName,
-                            imageUrl = imageUrl,
-                            originalPrice = (originalPrice * 100.0).roundToInt() / 100.0,
-                            promoPrice = (promoPrice * 100.0).roundToInt() / 100.0,
-                            discountPercentage = discount,
-                            rating = (rating * 10.0).roundToInt() / 10.0,
-                            salesCount = sales,
-                            freeShipping = promoPrice >= 29.0,
-                            nationalSeller = true,
-                            couponAvailable = discount >= 20,
-                            couponText = if (discount >= 20) "Cupom Shopee Oficial" else null,
-                            affiliateUrl = if (offerLink.isNotBlank()) offerLink else productLink,
-                            deepLinkUrl = "shopee://item?id=$itemId",
-                            lowest30DaysPrice = promoPrice,
-                            isSuperDeal = discount >= 35
-                        )
+                val cleanName = BilingualSearchTranslationEngine.translateAndCleanTitle(name)
+                products.add(
+                    Product(
+                        id = "shp_$itemId",
+                        store = StoreType.SHOPEE,
+                        title = cleanName,
+                        imageUrl = imageUrl,
+                        originalPrice = originalPrice,
+                        promoPrice = (promoPrice * 100.0).roundToInt() / 100.0,
+                        discountPercentage = discount,
+                        rating = rating,
+                        salesCount = sales,
+                        freeShipping = promoPrice >= 29.0,
+                        nationalSeller = true,
+                        couponAvailable = false,
+                        couponText = null,
+                        affiliateUrl = if (offerLink.isNotBlank()) offerLink else productLink,
+                        deepLinkUrl = "shopee://item?id=$itemId",
+                        lowest30DaysPrice = promoPrice,
+                        isSuperDeal = (discount ?: 0) >= 35
                     )
-                }
+                )
             }
             return products
         } catch (e: Exception) {
@@ -437,33 +461,44 @@ class AffiliateProductRepository {
                 val rawPrice = node.optDouble("price", 0.0)
                 val priceMin = node.optDouble("priceMin", 0.0)
                 val promoPrice = if (priceMin > 0) priceMin else rawPrice
-                val originalPrice = if (rawPrice > promoPrice) rawPrice else (promoPrice * 1.30)
-                val discountRate = node.optInt("priceDiscountRate", 0)
-                val discount = if (discountRate > 0) discountRate else (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(15, 80)
+                if (name.isBlank() || promoPrice <= 0.0) continue
 
-                if (name.isNotBlank() && promoPrice > 0) {
-                    products.add(
-                        Product(
-                            id = "shp_deal_$itemId",
-                            store = StoreType.SHOPEE,
-                            title = name,
-                            imageUrl = imageUrl,
-                            originalPrice = (originalPrice * 100.0).roundToInt() / 100.0,
-                            promoPrice = (promoPrice * 100.0).roundToInt() / 100.0,
-                            discountPercentage = discount,
-                            rating = node.optDouble("ratingStar", 4.8),
-                            salesCount = node.optInt("sales", 500),
-                            freeShipping = true,
-                            nationalSeller = true,
-                            couponAvailable = true,
-                            couponText = "Oferta Relâmpago Shopee",
-                            affiliateUrl = node.optString("offerLink", node.optString("productLink", "")),
-                            deepLinkUrl = "shopee://item?id=$itemId",
-                            lowest30DaysPrice = promoPrice,
-                            isSuperDeal = true
-                        )
+                val originalPrice = if (rawPrice > promoPrice) (rawPrice * 100.0).roundToInt() / 100.0 else null
+                val discountRate = node.optInt("priceDiscountRate", 0)
+                val discount = if (discountRate > 0) {
+                    discountRate
+                } else if (originalPrice != null && originalPrice > promoPrice) {
+                    (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(1, 99)
+                } else null
+
+                val rating = if (node.has("ratingStar") && !node.isNull("ratingStar")) {
+                    node.optDouble("ratingStar").takeIf { it > 0.0 }?.let { (it * 10.0).roundToInt() / 10.0 }
+                } else null
+                val sales = if (node.has("sales") && !node.isNull("sales")) {
+                    node.optInt("sales").takeIf { it >= 0 }
+                } else null
+
+                products.add(
+                    Product(
+                        id = "shp_deal_$itemId",
+                        store = StoreType.SHOPEE,
+                        title = name,
+                        imageUrl = imageUrl,
+                        originalPrice = originalPrice,
+                        promoPrice = (promoPrice * 100.0).roundToInt() / 100.0,
+                        discountPercentage = discount,
+                        rating = rating,
+                        salesCount = sales,
+                        freeShipping = true,
+                        nationalSeller = true,
+                        couponAvailable = false,
+                        couponText = null,
+                        affiliateUrl = node.optString("offerLink", node.optString("productLink", "")),
+                        deepLinkUrl = "shopee://item?id=$itemId",
+                        lowest30DaysPrice = promoPrice,
+                        isSuperDeal = true
                     )
-                }
+                )
             }
             return products
         } catch (e: Exception) {
@@ -648,32 +683,45 @@ class AffiliateProductRepository {
                 val imageUrl = when {
                     rawImage.startsWith("//") -> "https:$rawImage"
                     rawImage.startsWith("http") -> rawImage
-                    else -> "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500&q=80"
+                    else -> ""
                 }
 
                 val promoPriceStr = item.optString("target_sale_price",
                     item.optString("target_app_sale_price",
-                        item.optString("app_sale_price", item.optString("sale_price", "39.90"))
+                        item.optString("app_sale_price", item.optString("sale_price", ""))
                     )
                 )
-                val promoPrice = promoPriceStr.toDoubleOrNull() ?: 39.90
+                val promoPrice = promoPriceStr.toDoubleOrNull() ?: 0.0
+                if (promoPrice <= 0.0) continue
 
-                val origPriceStr = item.optString("target_original_price",
-                    item.optString("original_price", (promoPrice * 1.45).toString())
-                )
-                val originalPrice = origPriceStr.toDoubleOrNull() ?: (promoPrice * 1.45)
+                val origPriceStr = item.optString("target_original_price", item.optString("original_price", ""))
+                val rawOrig = origPriceStr.toDoubleOrNull()
+                val originalPrice = if (rawOrig != null && rawOrig > promoPrice) rawOrig else null
 
-                val discount = item.optString("discount", "").replace("%", "").toIntOrNull()
-                    ?: (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(10, 85)
+                val discountFromApi = item.optString("discount", "").replace("%", "").toIntOrNull()
+                val discount = if (discountFromApi != null && discountFromApi > 0) {
+                    discountFromApi
+                } else if (originalPrice != null && originalPrice > promoPrice) {
+                    (((originalPrice - promoPrice) / originalPrice) * 100).roundToInt().coerceIn(1, 99)
+                } else null
 
-                val evalRate = item.optString("evaluate_rate", "96.0%")
-                val rating = if (evalRate.contains("%")) {
-                    val pct = evalRate.replace("%", "").toDoubleOrNull() ?: 96.0
-                    (pct / 20.0).coerceIn(4.0, 5.0)
-                } else {
-                    evalRate.toDoubleOrNull() ?: 4.8
-                }
-                val sales = item.optInt("lastest_volume", item.optInt("volume", 2300)).coerceAtLeast(100)
+                val evalRate = item.optString("evaluate_rate", "")
+                val rating = if (evalRate.isNotBlank()) {
+                    if (evalRate.contains("%")) {
+                        val pct = evalRate.replace("%", "").toDoubleOrNull()
+                        pct?.let { (it / 20.0).coerceIn(1.0, 5.0) }
+                    } else {
+                        evalRate.toDoubleOrNull()
+                    }
+                } else null
+
+                val sales = if (item.has("lastest_volume")) {
+                    item.optInt("lastest_volume").takeIf { it > 0 }
+                } else if (item.has("volume")) {
+                    item.optInt("volume").takeIf { it > 0 }
+                } else null
+
+                val shopTitle = item.optString("shop_title", item.optString("seller_name", "")).takeIf { it.isNotBlank() }
 
                 products.add(
                     Product(
@@ -688,13 +736,13 @@ class AffiliateProductRepository {
                         salesCount = sales,
                         freeShipping = true,
                         nationalSeller = false,
-                        couponAvailable = true,
-                        couponText = "Cupom Choice Oficial AliExpress",
-                        sellerName = "AliExpress Oficial Choice",
+                        couponAvailable = false,
+                        couponText = null,
+                        sellerName = shopTitle,
                         affiliateUrl = if (promoUrl.isNotBlank()) promoUrl else detailUrl,
                         deepLinkUrl = "aliexpress://product/detail?productId=$productId",
                         lowest30DaysPrice = promoPrice,
-                        isSuperDeal = isDeal || discount >= 40
+                        isSuperDeal = isDeal || (discount ?: 0) >= 40
                     )
                 )
             }
@@ -736,7 +784,7 @@ class AffiliateProductRepository {
     fun calculateRelevanceScore(product: Product, query: String, detectedCategory: String? = null): Double {
         val cleanQ = QueryIntentEngine.cleanSearchQuery(query).lowercase(Locale.ROOT)
         val tokens = cleanQ.split("\\s+".toRegex()).filter { it.isNotBlank() && it.length >= 2 }
-        if (tokens.isEmpty()) return product.salesCount.toDouble()
+        if (tokens.isEmpty()) return (product.salesCount ?: 0).toDouble()
 
         val cleanTitle = Normalizer.normalize(product.title.lowercase(Locale.ROOT), Normalizer.Form.NFD)
             .replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
@@ -768,7 +816,6 @@ class AffiliateProductRepository {
         }
 
         // 5. Penalidade suave para acessórios se o usuário não pediu acessórios (-600 pontos)
-        // Isso coloca suportes, capas e cabos para o fim da lista, sem deletar nenhum item!
         val isAccessory = QueryIntentEngine.UNIVERSAL_ACCESSORIES.any { acc ->
             cleanTitle.contains(acc) && !cleanQ.contains(acc)
         } || BilingualSearchTranslationEngine.isFalseFriendAccessory(cleanTitle, detectedCategory)
@@ -778,8 +825,8 @@ class AffiliateProductRepository {
         }
 
         // 6. Desempate orgânico por reputação e vendas
-        val salesScore = (product.salesCount.coerceAtMost(5000) / 100.0) // 0 a 50
-        val ratingScore = (product.rating * 5.0) // 0 a 25
+        val salesScore = ((product.salesCount ?: 0).coerceAtMost(5000) / 100.0) // 0 a 50
+        val ratingScore = ((product.rating ?: 0.0) * 5.0) // 0 a 25
         score += salesScore + ratingScore
 
         return score
@@ -794,14 +841,14 @@ class AffiliateProductRepository {
         return when (filter) {
             ProductFilter.RELEVANCE -> {
                 if (query.isBlank()) {
-                    list.sortedByDescending { it.salesCount }
+                    list.sortedByDescending { it.salesCount ?: 0 }
                 } else {
                     list.sortedByDescending { calculateRelevanceScore(it, query, detectedCategory) }
                 }
             }
             ProductFilter.LOWEST_PRICE -> list.sortedBy { it.promoPrice }
-            ProductFilter.HIGHEST_DISCOUNT -> list.sortedByDescending { it.discountPercentage }
-            ProductFilter.BEST_RATED -> list.sortedByDescending { it.rating }
+            ProductFilter.HIGHEST_DISCOUNT -> list.sortedByDescending { it.discountPercentage ?: 0 }
+            ProductFilter.BEST_RATED -> list.sortedByDescending { it.rating ?: 0.0 }
             ProductFilter.FREE_SHIPPING -> list.filter { it.freeShipping }.sortedBy { it.promoPrice }
         }
     }

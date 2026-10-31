@@ -47,6 +47,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Compare
 import androidx.compose.material.icons.filled.ElectricBolt
@@ -457,25 +458,60 @@ fun SearchScreen(
                     val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter(filterPredicate).ifEmpty { result.shopeeProducts }
                     val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter(filterPredicate).ifEmpty { result.unifiedSortedProducts }
 
-                    when (state.viewMode) {
-                        ViewMode.SIDE_BY_SIDE -> {
-                            SideBySideComparisonView(
-                                aliProducts = aliList,
-                                shopeeProducts = shpList,
-                                favoriteIds = favoriteIds,
-                                onToggleFavorite = onToggleFavorite,
-                                listState = lazyListState,
-                                isHeaderCollapsed = isHeaderCollapsed,
-                                onToggleCollapse = { isHeaderCollapsed = !isHeaderCollapsed }
-                            )
+                    val totalExact = aliList.size + shpList.size
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        if (totalExact in 1..10) {
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xFFF0FDF4),
+                                border = BorderStroke(0.5.dp, Color(0xFFBBF7D0))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = Color(0xFF16A34A),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Mostrando apenas resultados que correspondem exatamente à sua busca",
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = Color(0xFF15803D)
+                                    )
+                                }
+                            }
                         }
-                        ViewMode.UNIFIED_LIST -> {
-                            UnifiedListView(
-                                products = unifiedList,
-                                winnerId = result.bestOverallDeal?.id,
-                                favoriteIds = favoriteIds,
-                                onToggleFavorite = onToggleFavorite
-                            )
+
+                        Box(modifier = Modifier.weight(1f)) {
+                            when (state.viewMode) {
+                                ViewMode.SIDE_BY_SIDE -> {
+                                    SideBySideComparisonView(
+                                        aliProducts = aliList,
+                                        shopeeProducts = shpList,
+                                        favoriteIds = favoriteIds,
+                                        onToggleFavorite = onToggleFavorite,
+                                        listState = lazyListState,
+                                        isHeaderCollapsed = isHeaderCollapsed,
+                                        onToggleCollapse = { isHeaderCollapsed = !isHeaderCollapsed }
+                                    )
+                                }
+                                ViewMode.UNIFIED_LIST -> {
+                                    UnifiedListView(
+                                        products = unifiedList,
+                                        winnerId = result.bestOverallDeal?.id,
+                                        favoriteIds = favoriteIds,
+                                        onToggleFavorite = onToggleFavorite
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1143,7 +1179,7 @@ private fun EmptySearchState(
                 text = if (query.isEmpty())
                     "Pesquise qualquer produto para ver preços reais, frete e estoque lado a lado nas duas plataformas."
                 else
-                    "Tente termos mais genéricos ou use uma das sugestões abaixo.",
+                    "Filtramos produtos divergentes para garantir precisão exata. Tente pesquisar com outros termos ou use as categorias abaixo.",
                 fontSize = 13.sp,
                 color = Color(0xFF64748B),
                 textAlign = TextAlign.Center,

@@ -9,11 +9,11 @@ data class Product(
     val store: StoreType,
     val title: String,
     val imageUrl: String,
-    val originalPrice: Double,
+    val originalPrice: Double? = null,
     val promoPrice: Double,
-    val discountPercentage: Int,
-    val rating: Double,
-    val salesCount: Int,
+    val discountPercentage: Int? = null,
+    val rating: Double? = null,
+    val salesCount: Int? = null,
     val freeShipping: Boolean,
     val nationalSeller: Boolean,
     val couponAvailable: Boolean,
@@ -22,7 +22,7 @@ data class Product(
     val deepLinkUrl: String,
     val priceDropNotice: String? = null,
     val lowest30DaysPrice: Double = promoPrice,
-    val isSuperDeal: Boolean = discountPercentage >= 40,
+    val isSuperDeal: Boolean = (discountPercentage ?: 0) >= 40,
     val isExactAiMatch: Boolean = false,
     val aiMatchBadge: String? = null,
     val aiGender: String? = null,
@@ -38,8 +38,8 @@ data class Product(
     val formattedPromoPrice: String
         get() = formatBrl(promoPrice)
 
-    val formattedOriginalPrice: String
-        get() = formatBrl(originalPrice)
+    val formattedOriginalPrice: String?
+        get() = originalPrice?.let { formatBrl(it) }
 
     val brand: String?
         get() = technicalSpecs?.brand
