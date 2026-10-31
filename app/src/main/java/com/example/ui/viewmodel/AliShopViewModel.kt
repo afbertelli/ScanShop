@@ -117,6 +117,7 @@ class AliShopViewModel(
                 if (currentRecent.size > 8) currentRecent.removeLast()
             }
 
+            val searchStartTime = System.currentTimeMillis()
             try {
                 val baseResult = affiliateRepository.searchProducts(
                     query = trimmed,
@@ -135,12 +136,23 @@ class AliShopViewModel(
                     baseResult
                 }
 
+                // Garante tempo para a apresentação da auditoria e checklist em destaque (~2.4s)
+                val elapsed = System.currentTimeMillis() - searchStartTime
+                val minDisplayMs = 2400L
+                if (elapsed < minDisplayMs) {
+                    kotlinx.coroutines.delay(minDisplayMs - elapsed)
+                }
+
                 _searchState.value = _searchState.value.copy(
                     comparisonResult = finalResult,
                     recentSearches = currentRecent,
                     isSearching = false
                 )
             } catch (e: Exception) {
+                val elapsed = System.currentTimeMillis() - searchStartTime
+                if (elapsed < 1400L) {
+                    kotlinx.coroutines.delay(1400L - elapsed)
+                }
                 _searchState.value = _searchState.value.copy(
                     comparisonResult = null,
                     recentSearches = currentRecent,

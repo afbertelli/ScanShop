@@ -12,6 +12,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -189,12 +191,16 @@ fun SearchScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .nestedScroll(nestedScrollConnection)
             .background(MaterialTheme.colorScheme.background)
     ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(nestedScrollConnection)
+        ) {
         // Collapsible Search Bar + Filters + Comparison Banner (collapses when dragged/scrolled down)
         AnimatedVisibility(
             visible = !isHeaderCollapsed || !hasResults,
@@ -370,114 +376,121 @@ fun SearchScreen(
             }
         }
 
-        // Main content
-        if (state.isSearching) {
-            SearchLoadingSplashScreen(
-                query = state.query,
-                modifier = Modifier.fillMaxSize()
-            )
-        } else if (state.errorMessage != null && state.comparisonResult == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
+        // Main content with foreground Modal Popup overlay
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Background Layer: Search results, discovery hub or error state
+            if (state.errorMessage != null && state.comparisonResult == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CloudOff,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = "Erro ao buscar ofertas em tempo real",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF1E293B)
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = state.errorMessage,
-                        fontSize = 13.sp,
-                        color = Color(0xFF64748B),
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Button(
-                        onClick = { onSearch(state.query) },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        shape = RoundedCornerShape(20.dp)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Text("Tentar novamente", color = Color.White, fontWeight = FontWeight.Bold)
+                        Icon(
+                            imageVector = Icons.Default.CloudOff,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Erro ao buscar ofertas em tempo real",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1E293B)
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = state.errorMessage,
+                            fontSize = 13.sp,
+                            color = Color(0xFF64748B),
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { onSearch(state.query) },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(20.dp)
+                        ) {
+                            Text("Tentar novamente", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
-            }
-        } else {
-            val result = state.comparisonResult
-            if (result == null || (result.aliExpressProducts.isEmpty() && result.shopeeProducts.isEmpty())) {
-                EmptySearchState(
-                    query = state.query,
-                    onVoiceSearchClick = startVoiceSearch,
-                    onCategoryClick = onSearch
-                )
             } else {
-                val filterPredicate: (Product) -> Boolean = { p ->
-                    when {
-                        activeSpecFilter == null -> true
-                        activeSpecFilter == "VERIFIED_ONLY" -> p.sellerTrust?.isVerified == true
-                        activeSpecFilter!!.startsWith("BRAND:") -> {
-                            val targetBrand = activeSpecFilter!!.removePrefix("BRAND:")
-                            p.brand?.equals(targetBrand, ignoreCase = true) == true ||
-                                    p.title.contains(targetBrand, ignoreCase = true)
-                        }
-                        activeSpecFilter!!.startsWith("CAPACITY:") -> {
-                            val targetCap = activeSpecFilter!!.removePrefix("CAPACITY:")
-                            p.capacity?.contains(targetCap, ignoreCase = true) == true ||
-                                    p.title.contains(targetCap, ignoreCase = true)
-                        }
-                        else -> {
-                            val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
-                            p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
-                                    p.brand?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
-                                    p.capacity?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
-                                    p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                val result = state.comparisonResult
+                if (result == null || (result.aliExpressProducts.isEmpty() && result.shopeeProducts.isEmpty())) {
+                    EmptySearchState(
+                        query = state.query,
+                        onVoiceSearchClick = startVoiceSearch,
+                        onCategoryClick = onSearch
+                    )
+                } else {
+                    val filterPredicate: (Product) -> Boolean = { p ->
+                        when {
+                            activeSpecFilter == null -> true
+                            activeSpecFilter == "VERIFIED_ONLY" -> p.sellerTrust?.isVerified == true
+                            activeSpecFilter!!.startsWith("BRAND:") -> {
+                                val targetBrand = activeSpecFilter!!.removePrefix("BRAND:")
+                                p.brand?.equals(targetBrand, ignoreCase = true) == true ||
+                                        p.title.contains(targetBrand, ignoreCase = true)
+                            }
+                            activeSpecFilter!!.startsWith("CAPACITY:") -> {
+                                val targetCap = activeSpecFilter!!.removePrefix("CAPACITY:")
+                                p.capacity?.contains(targetCap, ignoreCase = true) == true ||
+                                        p.title.contains(targetCap, ignoreCase = true)
+                            }
+                            else -> {
+                                val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
+                                p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
+                                        p.brand?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
+                                        p.capacity?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
+                                        p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
+                            }
                         }
                     }
-                }
 
-                val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter(filterPredicate).ifEmpty { result.aliExpressProducts }
-                val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter(filterPredicate).ifEmpty { result.shopeeProducts }
-                val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter(filterPredicate).ifEmpty { result.unifiedSortedProducts }
+                    val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter(filterPredicate).ifEmpty { result.aliExpressProducts }
+                    val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter(filterPredicate).ifEmpty { result.shopeeProducts }
+                    val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter(filterPredicate).ifEmpty { result.unifiedSortedProducts }
 
-                when (state.viewMode) {
-                    ViewMode.SIDE_BY_SIDE -> {
-                        SideBySideComparisonView(
-                            aliProducts = aliList,
-                            shopeeProducts = shpList,
-                            favoriteIds = favoriteIds,
-                            onToggleFavorite = onToggleFavorite,
-                            listState = lazyListState,
-                            isHeaderCollapsed = isHeaderCollapsed,
-                            onToggleCollapse = { isHeaderCollapsed = !isHeaderCollapsed }
-                        )
-                    }
-                    ViewMode.UNIFIED_LIST -> {
-                        UnifiedListView(
-                            products = unifiedList,
-                            winnerId = result.bestOverallDeal?.id,
-                            favoriteIds = favoriteIds,
-                            onToggleFavorite = onToggleFavorite
-                        )
+                    when (state.viewMode) {
+                        ViewMode.SIDE_BY_SIDE -> {
+                            SideBySideComparisonView(
+                                aliProducts = aliList,
+                                shopeeProducts = shpList,
+                                favoriteIds = favoriteIds,
+                                onToggleFavorite = onToggleFavorite,
+                                listState = lazyListState,
+                                isHeaderCollapsed = isHeaderCollapsed,
+                                onToggleCollapse = { isHeaderCollapsed = !isHeaderCollapsed }
+                            )
+                        }
+                        ViewMode.UNIFIED_LIST -> {
+                            UnifiedListView(
+                                products = unifiedList,
+                                winnerId = result.bestOverallDeal?.id,
+                                favoriteIds = favoriteIds,
+                                onToggleFavorite = onToggleFavorite
+                            )
+                        }
                     }
                 }
             }
         }
     }
+
+    // Foreground Modal Popup: aparece em destaque na frente de todo o app
+    if (state.isSearching) {
+        SearchLoadingSplashScreen(
+            query = state.query,
+            modifier = Modifier.fillMaxSize()
+        )
+    }
+}
 }
 
 @Composable
@@ -1185,25 +1198,13 @@ private fun EmptySearchState(
         // Trending Categories section
         item {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(
-                        text = "🔥 Categorias Populares",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF1E293B)
-                    )
-                    Text(
-                        text = "Toque para comparar",
-                        fontSize = 11.5.sp,
-                        color = Color(0xFF64748B)
-                    )
-                }
+                Text(
+                    text = "🔥 Categorias Populares",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF1E293B),
+                    modifier = Modifier.padding(bottom = 10.dp)
+                )
 
                 // Grid of category chips
                 FlowRow(

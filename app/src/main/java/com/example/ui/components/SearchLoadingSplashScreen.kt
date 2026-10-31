@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -9,10 +8,11 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,7 +37,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -65,9 +65,9 @@ import com.example.ui.theme.ShopeeOrange
 import kotlinx.coroutines.delay
 
 /**
- * Tela de espera / Splash interativa durante a busca em tempo real.
- * Substitui o indicador circular simples e comunica ativamente todas as etapas
- * que o motor inteligente do ScanShop realiza nos 2 a 4 segundos de busca.
+ * Modal Popup Flutuante em Destaque na frente do app durante a busca em tempo real.
+ * Exibe animação fluida de ~2.4s com auditoria e checklist das plataformas.
+ * Perfeitamente dimensionado para caber em qualquer tela sem cortes.
  */
 @Composable
 fun SearchLoadingSplashScreen(
@@ -75,12 +75,12 @@ fun SearchLoadingSplashScreen(
     modifier: Modifier = Modifier
 ) {
     // Rotação suave do anel de pulso
-    val infiniteTransition = rememberInfiniteTransition(label = "splash_spin")
+    val infiniteTransition = rememberInfiniteTransition(label = "modal_spin")
     val rotation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
         animationSpec = infiniteRepeatable(
-            animation = tween( durationMillis = 2400, easing = LinearEasing),
+            animation = tween(durationMillis = 2000, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "rotate_ring"
@@ -88,216 +88,246 @@ fun SearchLoadingSplashScreen(
 
     // Efeito de pulso de escala do logo central
     val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
+        initialValue = 0.95f,
         targetValue = 1.05f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = FastOutSlowInEasing),
+            animation = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "pulse_scale"
     )
 
-    // Avanço visual dos passos do algoritmo do ScanShop
+    // Barra de progresso animada de 0% a 100% durante os 2.4s
+    val animatedProgress = remember { Animatable(0.08f) }
     var activeStep by remember { mutableIntStateOf(0) }
+
     LaunchedEffect(Unit) {
-        // Passo 0: Conexão
-        delay(600)
-        activeStep = 1 // Filtro Anti-Acessórios
-        delay(900)
-        activeStep = 2 // Reputação e Vendedores Ruins
-        delay(1000)
-        activeStep = 3 // Menor Preço e Balanço
+        animatedProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 2400, easing = FastOutSlowInEasing)
+        )
     }
 
+    LaunchedEffect(Unit) {
+        delay(600)
+        activeStep = 1 // Filtro Anti-Acessórios
+        delay(600)
+        activeStep = 2 // Reputação dos Vendedores
+        delay(600)
+        activeStep = 3 // Balanço e Menor Preço
+        delay(500)
+        activeStep = 4 // Concluído
+    }
+
+    // Fundo escurecido translúcido cobrindo a tela inteira
     Box(
         modifier = modifier
             .fillMaxSize()
-            .testTag("search_loading_splash_screen")
-            .background(Color(0xFFFAFAFC)),
+            .testTag("search_loading_modal_overlay")
+            .background(Color(0x990F172A))
+            .clickable(enabled = false) {},
         contentAlignment = Alignment.Center
     ) {
-        Column(
+        // Card Popup Flutuante centralizado e compacto
+        Card(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+                .fillMaxWidth(0.90f)
+                .padding(horizontal = 12.dp)
+                .shadow(
+                    elevation = 20.dp,
+                    shape = RoundedCornerShape(22.dp),
+                    spotColor = Color.Black.copy(alpha = 0.4f)
+                ),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White),
+            border = BorderStroke(1.dp, Color(0xFFE2E8F0))
         ) {
-            // 1. Logo com anel animado de gradiente duplo (AliExpress Red & Shopee Orange)
-            Box(
-                modifier = Modifier.size(110.dp),
-                contentAlignment = Alignment.Center
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Anel pulsante rotativo
+                // 1. Logo animado compacto
                 Box(
-                    modifier = Modifier
-                        .size(104.dp)
-                        .rotate(rotation)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.sweepGradient(
-                                listOf(
-                                    AliExpressRed,
-                                    ShopeeOrange,
-                                    Color(0xFF7E22CE),
-                                    AliExpressRed
+                    modifier = Modifier.size(64.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(60.dp)
+                            .rotate(rotation)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.sweepGradient(
+                                    listOf(
+                                        AliExpressRed,
+                                        ShopeeOrange,
+                                        Color(0xFF7E22CE),
+                                        AliExpressRed
+                                    )
                                 )
                             )
-                        )
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .size(54.dp)
+                            .clip(CircleShape)
+                            .background(Color.White)
+                    )
+
+                    Box(modifier = Modifier.scale(pulseScale)) {
+                        ScanShopLogo(size = 42.dp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 2. Título do Modal
+                Text(
+                    text = "Auditando Ofertas em Tempo Real",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFF0F172A),
+                    textAlign = TextAlign.Center
                 )
 
-                // Fundo branco interno para efeito de aro fino
+                Spacer(modifier = Modifier.height(3.dp))
+
+                Text(
+                    text = "Eliminando vendedores ruins e produtos mal avaliados...",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = AliExpressRed,
+                    textAlign = TextAlign.Center
+                )
+
+                // 3. Chip de termo pesquisado
+                if (query.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFFEFF6FF),
+                        border = BorderStroke(0.5.dp, Color(0xFFBFDBFE))
+                    ) {
+                        Text(
+                            text = "Termo: \"$query\"",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF1D4ED8),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 4. Barra de Progresso visual
                 Box(
                     modifier = Modifier
-                        .size(96.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                )
-
-                // Logo ScanShop com leve respiração
-                Box(modifier = Modifier.scale(pulseScale)) {
-                    ScanShopLogo(size = 72.dp)
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color(0xFFE2E8F0))
+                ) {
+                    LinearProgressIndicator(
+                        progress = { animatedProgress.value },
+                        modifier = Modifier.fillMaxSize(),
+                        color = ShopeeOrange,
+                        trackColor = Color(0xFFE2E8F0)
+                    )
                 }
-            }
 
-            Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-            // 2. Título principal solicitado pelo usuário
-            Text(
-                text = "Aguarde: o ScanShop está separando os melhores produtos",
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF1E293B),
-                textAlign = TextAlign.Center,
-                lineHeight = 23.sp,
-                modifier = Modifier.fillMaxWidth(0.92f)
-            )
+                // 5. Checklist de Auditoria
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF8FAFC),
+                    border = BorderStroke(0.5.dp, Color(0xFFE2E8F0))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        ModalStepItem(
+                            icon = Icons.Default.Sync,
+                            title = "Consultando Shopee BR & AliExpress em paralelo",
+                            subtitle = "Conectando às APIs em tempo real",
+                            isDone = activeStep >= 1,
+                            isActive = activeStep == 0
+                        )
 
-            Spacer(modifier = Modifier.height(6.dp))
+                        ModalStepItem(
+                            icon = Icons.Default.FilterAlt,
+                            title = "Filtro de Falsos Amigos & Acessórios Avulsos",
+                            subtitle = "Priorizando o produto principal pesquisado",
+                            isDone = activeStep >= 2,
+                            isActive = activeStep == 1
+                        )
 
-            // 3. Subtítulo com destaque para eliminação de maus vendedores
-            Text(
-                text = "Eliminando vendedores ruins e produtos mal avaliados...",
-                fontSize = 13.5.sp,
-                fontWeight = FontWeight.Medium,
-                color = AliExpressRed,
-                textAlign = TextAlign.Center
-            )
+                        ModalStepItem(
+                            icon = Icons.Default.Security,
+                            title = "Auditoria de Vendedores & Reputação Oficial",
+                            subtitle = "Avaliando selos oficiais e notas dos compradores",
+                            isDone = activeStep >= 3,
+                            isActive = activeStep == 2
+                        )
 
-            if (query.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
+                        ModalStepItem(
+                            icon = Icons.Default.PriceCheck,
+                            title = "Balanço 50/50 & Menor Preço Garantido",
+                            subtitle = "Calculando economia e soft ranking",
+                            isDone = activeStep >= 4,
+                            isActive = activeStep == 3
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // 6. Rodapé Roxo em destaque — 100% nítido, completo e visível
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFEFF6FF),
-                    border = BorderStroke(1.dp, Color(0xFFBFDBFE))
+                    color = Color(0xFFF3E8FF),
+                    border = BorderStroke(0.5.dp, Color(0xFFD8B4FE))
                 ) {
-                    Text(
-                        text = "Termo: \"$query\"",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF1D4ED8),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = Color(0xFF7E22CE),
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                        Text(
+                            text = "Busca ao vivo com links 100% seguros",
+                            fontSize = 10.5.sp,
+                            color = Color(0xFF6B21A8),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                    }
                 }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // 4. Barra de progresso contínua com gradiente oficial
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.85f)
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(Color(0xFFE2E8F0))
-            ) {
-                LinearProgressIndicator(
-                    modifier = Modifier.fillMaxSize(),
-                    color = ShopeeOrange,
-                    trackColor = Color(0xFFE2E8F0)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(22.dp))
-
-            // 5. Card com checklist dos passos da inteligência em tempo real
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    SplashStepItem(
-                        icon = Icons.Default.Sync,
-                        title = "Consultando Shopee BR & AliExpress em paralelo",
-                        description = "Requisições simultâneas em menos de 4 segundos",
-                        isDone = activeStep >= 1,
-                        isActive = activeStep == 0
-                    )
-
-                    SplashStepItem(
-                        icon = Icons.Default.FilterAlt,
-                        title = "Filtro Anti-Acessórios & Itens Desconexos",
-                        description = "Eliminando capas, películas, suportes e peças incompatíveis",
-                        isDone = activeStep >= 2,
-                        isActive = activeStep == 1
-                    )
-
-                    SplashStepItem(
-                        icon = Icons.Default.Security,
-                        title = "Auditoria de Vendedores & Reputação",
-                        description = "Descartando lojas sem reputação ou com notas baixas",
-                        isDone = activeStep >= 3,
-                        isActive = activeStep == 2
-                    )
-
-                    SplashStepItem(
-                        icon = Icons.Default.PriceCheck,
-                        title = "Balanço 50/50 & Menor Preço Garantido",
-                        description = "Distribuição simétrica e cálculo do melhor custo-benefício",
-                        isDone = activeStep >= 3,
-                        isActive = activeStep == 3
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-
-            // 6. Rodapé de confiança e transparência
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.AutoAwesome,
-                    contentDescription = null,
-                    tint = Color(0xFF7E22CE),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Busca em tempo real com links 100% oficiais e seguros",
-                    fontSize = 11.5.sp,
-                    color = Color(0xFF64748B),
-                    fontWeight = FontWeight.Medium
-                )
             }
         }
     }
 }
 
 @Composable
-private fun SplashStepItem(
+private fun ModalStepItem(
     icon: ImageVector,
     title: String,
-    description: String,
+    subtitle: String,
     isDone: Boolean,
     isActive: Boolean
 ) {
@@ -305,16 +335,15 @@ private fun SplashStepItem(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Indicador de status
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(24.dp)
                 .clip(CircleShape)
                 .background(
                     when {
                         isDone -> DealGreen.copy(alpha = 0.15f)
                         isActive -> ShopeeOrange.copy(alpha = 0.15f)
-                        else -> Color(0xFFF1F5F9)
+                        else -> Color(0xFFE2E8F0)
                     }
                 ),
             contentAlignment = Alignment.Center
@@ -324,32 +353,33 @@ private fun SplashStepItem(
                     imageVector = Icons.Default.CheckCircle,
                     contentDescription = null,
                     tint = DealGreen,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(15.dp)
                 )
             } else {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = if (isActive) ShopeeOrange else Color(0xFF94A3B8),
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(12.dp)
                 )
             }
         }
 
-        Spacer(modifier = Modifier.width(12.dp))
+        Spacer(modifier = Modifier.width(8.dp))
 
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                fontSize = 12.5.sp,
-                fontWeight = if (isActive || isDone) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (isActive || isDone) Color(0xFF1E293B) else Color(0xFF64748B)
+                fontSize = 11.sp,
+                fontWeight = if (isActive || isDone) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (isActive || isDone) Color(0xFF0F172A) else Color(0xFF64748B),
+                maxLines = 1
             )
             Text(
-                text = description,
-                fontSize = 10.5.sp,
+                text = subtitle,
+                fontSize = 9.sp,
                 color = if (isActive) AliExpressRed else Color(0xFF94A3B8),
-                lineHeight = 13.sp
+                maxLines = 1
             )
         }
     }

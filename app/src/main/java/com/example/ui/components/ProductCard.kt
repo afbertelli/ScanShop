@@ -284,7 +284,7 @@ fun CompactProductCard(
                 // Single Clean Metadata Line: Rating/Sales + Frete Grátis + Unica info Loja Oficial
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     val ratingValue = when {
@@ -299,38 +299,49 @@ fun CompactProductCard(
                         else -> "100+"
                     }
 
-                    Icon(
-                        imageVector = Icons.Default.Star,
-                        contentDescription = "Avaliação",
-                        tint = GoldStar,
-                        modifier = Modifier.size(11.dp)
-                    )
-                    Text(
-                        text = "$formattedRating • $salesText vend.",
-                        fontSize = 10.sp,
-                        color = Color(0xFF64748B),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    // Avaliação e vendas compacto (encolhe se a tela for estreita)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Star,
+                            contentDescription = "Avaliação",
+                            tint = GoldStar,
+                            modifier = Modifier.size(10.5.dp)
+                        )
+                        Text(
+                            text = "$formattedRating ($salesText)",
+                            fontSize = 10.sp,
+                            color = Color(0xFF64748B),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
 
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(4.dp))
 
-                    // Apenas UMA indicação de Loja Oficial (sem redundâncias)
-                    val isOfficial = product.sellerTrust?.isVerified == true || product.brand == "Oficial"
+                    // Indicação de Loja Oficial no quadro verde - Espaço 100% garantido e visível
+                    val isOfficial = product.store == StoreType.ALIEXPRESS ||
+                            product.sellerTrust?.isVerified == true ||
+                            product.sellerTrust?.badgeType == com.example.data.model.SellerBadgeType.OFFICIAL ||
+                            product.brand == "Oficial"
                     if (isOfficial) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(3.dp))
                                 .background(Color(0xFFECFDF5))
                                 .border(BorderStroke(0.5.dp, Color(0xFFA7F3D0)), RoundedCornerShape(3.dp))
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .padding(horizontal = 4.5.dp, vertical = 1.dp)
                         ) {
                             Text(
                                 text = "✓ Oficial",
                                 color = Color(0xFF047857),
                                 fontSize = 8.5.sp,
                                 fontWeight = FontWeight.Bold,
-                                maxLines = 1
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     } else if (product.freeShipping) {
@@ -338,14 +349,15 @@ fun CompactProductCard(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(3.dp))
                                 .background(DealGreenBg)
-                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                .padding(horizontal = 4.5.dp, vertical = 1.dp)
                         ) {
                             Text(
                                 text = "Frete Grátis",
                                 color = DealGreen,
                                 fontSize = 8.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                maxLines = 1
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
@@ -565,8 +577,11 @@ fun UnifiedProductCard(
                             color = Color(0xFF64748B)
                         )
 
-                        // Apenas UMA info de Loja Oficial (sem redundâncias)
-                        val isOfficial = product.sellerTrust?.isVerified == true || product.brand == "Oficial"
+                        // Indicação de Loja Oficial no quadro verde
+                        val isOfficial = product.store == StoreType.ALIEXPRESS ||
+                                product.sellerTrust?.isVerified == true ||
+                                product.sellerTrust?.badgeType == com.example.data.model.SellerBadgeType.OFFICIAL ||
+                                product.brand == "Oficial"
                         if (isOfficial) {
                             Spacer(modifier = Modifier.width(2.dp))
                             Box(
@@ -580,7 +595,9 @@ fun UnifiedProductCard(
                                     text = "✓ Oficial",
                                     color = Color(0xFF047857),
                                     fontSize = 8.5.sp,
-                                    fontWeight = FontWeight.Bold
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         } else if (product.freeShipping) {
@@ -589,7 +606,9 @@ fun UnifiedProductCard(
                                 text = "• Frete Grátis",
                                 fontSize = 9.5.sp,
                                 color = DealGreen,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }

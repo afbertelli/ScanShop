@@ -33,15 +33,15 @@ object SellerTrustEngine {
         val detectedBrand = extractBrandFromTitle(product.title)
 
         val sellerName = product.sellerName?.takeIf { it.isNotBlank() } ?: when {
-            isChoice -> "AliExpress Choice Direct"
+            isChoice -> "AliExpress Choice Loja Oficial"
             product.store == StoreType.SHOPEE && isOfficialByTitle && detectedBrand != null -> "$detectedBrand Loja Oficial"
             product.store == StoreType.SHOPEE && isOfficialByTitle -> "Shopee Loja Oficial"
             product.store == StoreType.SHOPEE && product.nationalSeller && detectedBrand != null -> "$detectedBrand Brasil Store"
             product.store == StoreType.SHOPEE && product.nationalSeller -> "Distribuidora Nacional BR"
-            product.store == StoreType.ALIEXPRESS && isOfficialByTitle && detectedBrand != null -> "$detectedBrand Official Store"
-            product.store == StoreType.ALIEXPRESS && detectedBrand != null -> "$detectedBrand Global Store"
+            product.store == StoreType.ALIEXPRESS && detectedBrand != null -> "$detectedBrand Loja Oficial"
+            product.store == StoreType.ALIEXPRESS -> "AliExpress Loja Oficial"
             product.store == StoreType.SHOPEE -> "Shopee Marketplace Store"
-            else -> "AliExpress Global Seller"
+            else -> "AliExpress Loja Oficial"
         }
 
         // 2. Pontuação Base
@@ -110,7 +110,7 @@ object SellerTrustEngine {
         }
 
         // 5. Credenciais Institucionais e Origem
-        val isOfficialStore = isOfficialByTitle || isChoice || (sellerName.contains("Oficial", ignoreCase = true) || sellerName.contains("Official", ignoreCase = true))
+        val isOfficialStore = product.store == StoreType.ALIEXPRESS || isOfficialByTitle || isChoice || (sellerName.contains("Oficial", ignoreCase = true) || sellerName.contains("Official", ignoreCase = true))
 
         if (isOfficialStore) {
             score += 20
