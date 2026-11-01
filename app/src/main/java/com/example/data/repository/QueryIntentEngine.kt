@@ -54,20 +54,53 @@ object QueryIntentEngine {
     val SYNONYM_GROUPS: List<Set<String>> = listOf(
         setOf("gamer", "gaming", "jogo", "jogos", "game", "games"),
         setOf("sem fio", "sem-fio", "semfio", "wireless", "bluetooth", "2.4g"),
-        setOf("mecanico", "mecanica", "mecanicos", "mechanical"),
-        setOf("fone", "fones", "headset", "headphone", "earbuds", "earphones", "tws", "ouvido", "auricular"),
+        setOf("mecanico", "mecanica", "mecanicos", "mecanicas", "mechanical"),
+        setOf("fone", "fones", "headset", "headsets", "headphone", "headphones", "earbuds", "earbud", "tws", "earphones", "earphone", "ouvido", "auricular"),
         setOf("mouse", "mouses", "rato", "mice"),
-        setOf("teclado", "teclados", "keyboard"),
+        setOf("teclado", "teclados", "keyboard", "keyboards"),
         setOf("tv", "smart tv", "smarttv", "smartv", "televisao", "televisor", "television", "smart"),
-        setOf("celular", "smartphone", "telefone", "phone"),
+        setOf("celular", "celulares", "smartphone", "smartphones", "telefone", "phone"),
         setOf("smartwatch", "smart watch", "smartband", "smart band", "relogio inteligente"),
-        setOf("placa mae", "placa-mae", "motherboard", "mainboard", "mobo", "mae", "placa"),
-        setOf("placa de video", "placa grafica", "gpu", "graphics card", "video card", "video"),
-        setOf("cadeira", "poltrona", "assento")
+        setOf("relogio", "relogios", "watch", "watches"),
+        setOf("tenis", "sneakers", "sneaker"),
+        setOf("oculos", "glasses", "sunglasses", "sunglass"),
+        setOf("corrida", "running", "run"),
+        setOf("masculino", "masculinos", "homem", "homens", "men", "mens", "male"),
+        setOf("feminino", "femininos", "mulher", "mulheres", "women", "womens", "female"),
+        setOf("placa mae", "placa-mae", "motherboard", "mainboard", "mobo"),
+        setOf("placa de video", "placa grafica", "gpu", "graphics card", "video card"),
+        setOf("cadeira", "cadeiras", "poltrona", "assento")
     )
 
+    /**
+     * Converte palavra simples para o singular para comparação flexível.
+     */
+    fun toSingular(word: String): String {
+        val w = word.lowercase(Locale.ROOT)
+        if (w.length <= 3) return w
+        if (w in setOf("tenis", "oculos", "lapis", "virus", "status", "pressao", "mouse", "plus", "tws", "wireless", "headset", "chassi", "alcas")) {
+            if (w == "alcas") return "alca"
+            return w
+        }
+        if (w.endsWith("oes")) return w.dropLast(3) + "ao"
+        if (w.endsWith("res") || w.endsWith("zes") || w.endsWith("nes") || w.endsWith("ses")) return w.dropLast(2)
+        if (w.endsWith("is") && !w.endsWith("lis") && !w.endsWith("ris")) return w.dropLast(2) + "l"
+        if (w.endsWith("s") && !w.endsWith("ss")) return w.dropLast(1)
+        return w
+    }
+
+    /**
+     * Verifica igualdade direta ou entre singulares de duas palavras.
+     */
+    fun wordsMatch(w1: String, w2: String): Boolean {
+        if (w1.equals(w2, ignoreCase = true)) return true
+        val s1 = toSingular(w1)
+        val s2 = toSingular(w2)
+        return s1.equals(s2, ignoreCase = true)
+    }
+
     fun tokenSatisfied(token: String, text: String): Boolean {
-        val lowerToken = token.lowercase(Locale.ROOT)
+        val lowerToken = token.lowercase(Locale.ROOT).trim()
         val lowerText = text.lowercase(Locale.ROOT)
 
         val tokenRegex = "\\b${Regex.escape(lowerToken)}\\b".toRegex()
@@ -75,11 +108,23 @@ object QueryIntentEngine {
             return true
         }
 
+        // Suporte a singular e plural para termos de uma palavra
+        val textWords = lowerText.split("[^a-z0-9]+".toRegex()).filter { it.isNotBlank() }
+        if (!lowerToken.contains(" ")) {
+            if (textWords.any { wordsMatch(it, lowerToken) }) {
+                return true
+            }
+        }
+
         for (group in SYNONYM_GROUPS) {
-            if (group.any { it.equals(lowerToken, ignoreCase = true) }) {
+            val groupMatchesToken = group.any { syn ->
+                syn.equals(lowerToken, ignoreCase = true) || (!lowerToken.contains(" ") && wordsMatch(syn, lowerToken))
+            }
+            if (groupMatchesToken) {
                 if (group.any { syn ->
                     val synRegex = "\\b${Regex.escape(syn)}\\b".toRegex()
-                    synRegex.containsMatchIn(lowerText) || (syn.contains(" ") && lowerText.contains(syn))
+                    synRegex.containsMatchIn(lowerText) || (syn.contains(" ") && lowerText.contains(syn)) ||
+                            (!syn.contains(" ") && textWords.any { wordsMatch(it, syn) })
                 }) {
                     return true
                 }
@@ -432,7 +477,8 @@ object QueryIntentEngine {
             .replace("relogio inteligente", "smartwatch")
             .replace("smart watch", "smartwatch")
             .replace("celular smartphone", "celular")
-            .replace("fones de ouvido", "fone de ouvido")
+            .replace("fones de ouvido", "fone")
+            .replace("fone de ouvido", "fone")
             .replace("fones bluetooth", "fone bluetooth")
             .replace("fones", "fone")
             .replace("mouses", "mouse")
@@ -441,6 +487,17 @@ object QueryIntentEngine {
             .replace("monitores", "monitor")
             .replace("placa-mae", "placa mae")
             .replace("placamae", "placa mae")
+            .replace("sneakers", "tenis")
+            .replace("sneaker", "tenis")
+            .replace("glasses", "oculos")
+
+        // Unidades canônicas
+        q = q.replace(Regex("\\b(\\d+(?:[.,]\\d+)?)\\s*(?:l|lt|lts|litros|litro)\\b", RegexOption.IGNORE_CASE), "$1 litro")
+        q = q.replace(Regex("\\b(\\d+(?:[.,]\\d+)?)\\s*(?:m|mts|metros|metro)\\b", RegexOption.IGNORE_CASE), "$1 metro")
+        q = q.replace(Regex("\\b(\\d+)\\s*(?:v|volts|volt)\\b", RegexOption.IGNORE_CASE), "$1v")
+        q = q.replace(Regex("\\b(\\d+)\\s*(?:ml|mls)\\b", RegexOption.IGNORE_CASE), "$1ml")
+        q = q.replace(Regex("\\b(\\d+)\\s*g[b]?\\b", RegexOption.IGNORE_CASE), "$1gb")
+        q = q.replace(Regex("\\b(\\d+)\\s*t[b]?\\b", RegexOption.IGNORE_CASE), "$1tb")
 
         val tokens = q.split("\\s+".toRegex()).filter { it.isNotBlank() }
         val uniqueTokens = mutableListOf<String>()

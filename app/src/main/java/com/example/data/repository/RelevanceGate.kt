@@ -1,9 +1,21 @@
 package com.example.data.repository
 
+import android.util.Log
+import com.example.data.ai.AiSearchService
 import com.example.data.ai.BilingualSearchTranslationEngine
 import com.example.data.model.Product
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
 import java.text.Normalizer
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 /**
  * Resultado da validação do RelevanceGate.
@@ -16,26 +28,129 @@ data class GateResult(
 )
 
 /**
- * Filtro único, rigoroso e determinístico de relevância para o ScanShop.
+ * Interface para auditoria de itens em "zona cinzenta" com Gemini.
+ */
+interface GeminiGrayZoneAuditor {
+    suspend fun auditBatch(query: String, items: List<Pair<String, String>>): Map<String, Boolean>
+}
+
+/**
+ * Implementação padrão da conferência em lote com Gemini para itens da zona cinzenta.
+ * Timeout estrito de 6s, parse seguro de JSON e rejeição segura em caso de falha/timeout.
+ */
+class RealGeminiGrayZoneAuditor(
+    private val apiKeyProvider: () -> String = { AiSearchService.getApiKey() }
+) : GeminiGrayZoneAuditor {
+
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .writeTimeout(6, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
+        .build()
+
+    override suspend fun auditBatch(query: String, items: List<Pair<String, String>>): Map<String, Boolean> = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext emptyMap()
+        val apiKey = apiKeyProvider()
+        if (apiKey.isBlank()) {
+            return@withContext items.associate { it.first to false }
+        }
+
+        try {
+            val limited = items.take(30)
+            val jsonArray = JSONArray()
+            for ((id, title) in limited) {
+                jsonArray.put(JSONObject().apply {
+                    put("id", id)
+                    put("titulo", title)
+                })
+            }
+
+            val prompt = """
+                Analise a busca do usuário: "$query".
+                Para cada produto da lista abaixo, determine se o produto é EXATAMENTE o que a busca pede e NÃO um acessório, peça de reposição, refil, suporte, capa, bateria avulsa ou item de outra categoria incompatível.
+                Retorne ESTRITAMENTE um array JSON no seguinte formato:
+                [{"id":"...", "correto": true|false}]
+                Onde correto = true significa produto legítimo compatível com o pedido, e false significa acessório, peça ou item errado.
+                Produtos:
+                $jsonArray
+            """.trimIndent()
+
+            val requestJson = JSONObject().apply {
+                put("contents", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("text", prompt)
+                            })
+                        })
+                    })
+                })
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.0)
+                    put("responseMimeType", "application/json")
+                })
+            }
+
+            val request = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey")
+                .post(requestJson.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                return@withContext items.associate { it.first to false }
+            }
+
+            val body = response.body?.string() ?: return@withContext items.associate { it.first to false }
+            val root = JSONObject(body)
+            val candidates = root.optJSONArray("candidates") ?: return@withContext items.associate { it.first to false }
+            val candidate = candidates.optJSONObject(0) ?: return@withContext items.associate { it.first to false }
+            val content = candidate.optJSONObject("content") ?: return@withContext items.associate { it.first to false }
+            val parts = content.optJSONArray("parts") ?: return@withContext items.associate { it.first to false }
+            val text = parts.optJSONObject(0)?.optString("text") ?: return@withContext items.associate { it.first to false }
+
+            val cleanJson = text.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+            val parsedArray = JSONArray(cleanJson)
+            val resultMap = mutableMapOf<String, Boolean>()
+            for (i in 0 until parsedArray.length()) {
+                val itemObj = parsedArray.optJSONObject(i) ?: continue
+                val id = itemObj.optString("id")
+                val correto = itemObj.optBoolean("correto", false)
+                if (id.isNotBlank()) {
+                    resultMap[id] = correto
+                }
+            }
+
+            items.associate { (id, _) ->
+                id to (resultMap[id] ?: false)
+            }
+        } catch (e: Exception) {
+            items.associate { it.first to false }
+        }
+    }
+}
+
+/**
+ * Filtro universal, rigoroso e determinístico de relevância para o ScanShop.
+ *
+ * Funciona para qualquer produto: tecnologia, vestuário, casa, cozinha, ferramentas, brinquedos, pets etc.
+ *
+ * Princípios:
+ * 1. Regras universais para toda busca (termos significativos obrigatórios, normalização profunda de unidades/singular, regra do "para", pares opostos).
+ * 2. Reconhecimento de marca deduzida por modelo/chip (RTX/GTX -> NVIDIA, Ryzen -> AMD, iPhone -> Apple, etc.) sem exigir a marca se o modelo estiver presente.
+ * 3. Expressões como "com controle remoto", "com dissipador", "com ventoinha" não são tratadas como acessórios.
+ * 4. Auditoria de itens em zona cinzenta via Gemini em lote único (máx 30 itens, timeout 6s).
  *
  * Regra de Ouro: É preferível mostrar menos resultados ou nenhum a mostrar produtos errados.
- *
- * Avalia:
- * 1. Normalização bilíngue profunda (PT-BR e EN)
- * 2. Eliminação estrita de lixo, falsos amigos e acessórios não solicitados
- * 3. Validação de conflito de gênero (masculino/feminino/infantil)
- * 4. Obrigatoriedade de marca detectada (ou seus aliases autorizados)
- * 5. Obrigatoriedade e não-conflito de modelo/código alfanumérico (ex: X99, B450, iPhone 13, G502)
- * 6. Obrigatoriedade de unidades, especificações e tamanhos citados (ex: 43 polegadas, 128gb, ddr4, 144hz)
- * 7. Obrigatoriedade de indicadores reais da categoria detectada
- * 8. Guarda de preço mínimo (minPriceGuard) contra peças avulsas
- * 9. Cobertura completa de termos para buscas genéricas (todas as palavras significativas)
  */
 object RelevanceGate {
 
+    var grayZoneAuditor: GeminiGrayZoneAuditor? = null
+
     private val STOP_WORDS: Set<String> = setOf(
         "de", "da", "do", "das", "dos", "para", "pra", "com", "sem", "e", "em", "no", "na",
-        "nos", "nas", "por", "um", "uma", "uns", "umas", "o", "a", "os", "as", "se", "ou"
+        "nos", "nas", "por", "um", "uma", "uns", "umas", "o", "a", "os", "as", "se", "ou", "for"
     )
 
     private val SPURIOUS_JUNK: List<String> = listOf(
@@ -44,14 +159,36 @@ object RelevanceGate {
     )
 
     /**
+     * Registra o log de rejeição em builds de debug e retorna o resultado.
+     */
+    private fun logAndReturn(result: GateResult, title: String): GateResult {
+        if (!result.isApproved && result.rejectionReason != null) {
+            val logMessage = "REJEITADO: $title — ${result.rejectionReason}"
+            try {
+                Log.d("RelevanceGate", logMessage)
+            } catch (e: Throwable) {
+                // Em testes unitários JVM puros
+            }
+        }
+        return result
+    }
+
+    /**
      * Avalia um produto completo contra a busca e a intenção analisada.
      */
-    fun evaluate(product: Product, query: String, intent: QueryIntent): GateResult {
+    fun evaluate(
+        product: Product,
+        query: String,
+        intent: QueryIntent,
+        auditor: GeminiGrayZoneAuditor? = grayZoneAuditor
+    ): GateResult {
         return evaluate(
             title = product.title,
             price = product.promoPrice,
             query = query,
-            intent = intent
+            intent = intent,
+            productId = product.id,
+            auditor = auditor
         )
     }
 
@@ -62,10 +199,44 @@ object RelevanceGate {
         title: String,
         price: Double = 0.0,
         query: String,
+        intent: QueryIntent,
+        productId: String = "test_item",
+        auditor: GeminiGrayZoneAuditor? = grayZoneAuditor
+    ): GateResult {
+        val localResult = evaluateLocal(title, price, query, intent)
+        if (!localResult.isApproved) {
+            return logAndReturn(localResult, title)
+        }
+
+        // Conferência da zona cinzenta com Gemini (se aplicável e se houver auditor configurado)
+        val currentAuditor = auditor ?: grayZoneAuditor
+        if (currentAuditor != null && isGrayZone(title, query, intent)) {
+            val auditMap = runBlocking {
+                currentAuditor.auditBatch(query, listOf(productId to title))
+            }
+            val isApprovedByGemini = auditMap[productId] ?: false
+            if (!isApprovedByGemini) {
+                return logAndReturn(
+                    GateResult(false, "Rejeitado na conferência com Gemini da zona cinzenta"),
+                    title
+                )
+            }
+        }
+
+        return logAndReturn(localResult, title)
+    }
+
+    /**
+     * Avaliação determinística local sem chamada externa.
+     */
+    fun evaluateLocal(
+        title: String,
+        price: Double = 0.0,
+        query: String,
         intent: QueryIntent
     ): GateResult {
-        val normTitle = normalize(title)
-        val normQuery = normalize(if (query.isNotBlank()) query else intent.cleanedQuery)
+        val normTitle = canonUnits(normalize(title))
+        val normQuery = canonUnits(normalize(if (query.isNotBlank()) query else intent.cleanedQuery))
         val compactTitle = normTitle.replace("[^a-z0-9]".toRegex(), "")
         val compactQuery = normQuery.replace("[^a-z0-9]".toRegex(), "")
 
@@ -81,19 +252,30 @@ object RelevanceGate {
         }
 
         // 2. Falsos Amigos de Tradução da Categoria (BilingualSearchTranslationEngine)
-        if (BilingualSearchTranslationEngine.isFalseFriendAccessory(normTitle, intent.detectedCategory)) {
+        // Só vale quando a busca NÃO pediu um acessório (ex.: "suporte celular carro", "mousepad gamer").
+        val queryWantsAccessory = isAccessoryIntent(normQuery)
+        if (!queryWantsAccessory &&
+            BilingualSearchTranslationEngine.isFalseFriendAccessory(normTitle, intent.detectedCategory)) {
             return GateResult(false, "Acessório ou peça detectada como falso amigo para a categoria")
         }
 
+        // 2.5. Regra universal do "para": o produto principal é o que vem ANTES de "para/compatível com".
+        // Se nada da busca aparece antes do marcador, o título é de acessório/peça/refil (Tampa para Panela,
+        // Alça para Bolsa, Filtro para Robô Aspirador...). Funciona para qualquer produto, sem lista por categoria.
+        if (isAccessoryByParaRule(normTitle, normQuery)) {
+            return GateResult(false, "Acessório/peça: o produto principal antes de 'para' não corresponde à busca")
+        }
+
         // 3. Validação de Acessórios e Peças Avulsas
-        // Se a busca NÃO pediu acessório, rejeita quando o título for de acessório/peça
-        val queryWantsAccessory = isAccessoryIntent(normQuery)
+        // Se a busca NÃO pediu acessório, rejeita quando o título for de acessório/peça.
+        // "Com controle remoto", "com dissipador" etc. são itens inclusos, não acessório: ficam fora da checagem.
+        val accTitle = stripIncludedAccessories(normTitle)
         if (!queryWantsAccessory) {
             // Checa acessórios específicos da categoria
             for (acc in intent.accessoryFilterTerms) {
                 val normAcc = normalize(acc)
-                if (normAcc.isNotBlank() && containsWordOrPhrase(normTitle, normAcc) && !containsWordOrPhrase(normQuery, normAcc)) {
-                    if (!isFalsePositiveAccessory(normTitle, normAcc, intent)) {
+                if (normAcc.isNotBlank() && containsWordOrPhrase(accTitle, normAcc) && !containsWordOrPhrase(normQuery, normAcc)) {
+                    if (!isFalsePositiveAccessory(normTitle, normAcc, intent) && !isDescriptorNotAccessory(normTitle, normAcc, normQuery)) {
                         return GateResult(false, "Acessório/peça da categoria não solicitado ('$acc')")
                     }
                 }
@@ -102,8 +284,8 @@ object RelevanceGate {
             // Checa acessórios universais
             for (acc in QueryIntentEngine.UNIVERSAL_ACCESSORIES) {
                 val normAcc = normalize(acc)
-                if (normAcc.isNotBlank() && containsWordOrPhrase(normTitle, normAcc) && !containsWordOrPhrase(normQuery, normAcc)) {
-                    if (!isFalsePositiveAccessory(normTitle, normAcc, intent)) {
+                if (normAcc.isNotBlank() && containsWordOrPhrase(accTitle, normAcc) && !containsWordOrPhrase(normQuery, normAcc)) {
+                    if (!isFalsePositiveAccessory(normTitle, normAcc, intent) && !isDescriptorNotAccessory(normTitle, normAcc, normQuery)) {
                         return GateResult(false, "Acessório universal não solicitado ('$acc')")
                     }
                 }
@@ -279,9 +461,12 @@ object RelevanceGate {
         // 10. Qualificadores Obrigatórios (Estendido para todas as buscas)
         val remainingQualifiers = extractRemainingQualifiers(normQuery, intent, targetModels, unitSpecs)
         for (qualifier in remainingQualifiers) {
-            val satisfied = QueryIntentEngine.tokenSatisfied(qualifier, normTitle) ||
+            // O título "compacto" (sem espaços) só vale para termos compostos ou longos; em termos curtos
+            // ele gera falso positivo (ex.: "aaa" dentro de "pilha aa alcalina" -> "pilhaaalcalina").
+            val compactAllowed = qualifier.contains(" ") || qualifier.length >= 6
+            val satisfied = tokenOk(qualifier, normTitle) ||
                     containsWordOrPhrase(normTitle, qualifier) ||
-                    compactTitle.contains(qualifier.replace(" ", ""))
+                    (compactAllowed && compactTitle.contains(qualifier.replace(" ", "")))
             if (!satisfied) {
                 return GateResult(
                     false,
@@ -538,7 +723,7 @@ object RelevanceGate {
     }
 
     /**
-     * Extrai especificações numéricas com unidade (ex: 43 polegadas, 128gb, ddr4, 144hz, 6 xicaras).
+     * Extrai especificações numéricas com unidade (ex: 43 polegadas, 128gb, ddr4, 144hz, 6 xicaras, 5 litros, 2 metros).
      */
     private fun extractUnitSpecs(normQuery: String): List<String> {
         val specs = mutableListOf<String>()
@@ -548,6 +733,7 @@ object RelevanceGate {
             "\\b(\\d{2,4}\\s*(?:hz))\\b".toRegex(),
             "\\b(ddr[345])\\b".toRegex(),
             "\\b(\\d{1,2}\\s*(?:xicaras?|xicara))\\b".toRegex(),
+            "\\b(\\d{1,3}(?:[.,]\\d)?\\s*(?:litro|metro))\\b".toRegex(),
             "\\b(4k|8k|full\\s*hd)\\b".toRegex()
         )
 
@@ -747,10 +933,137 @@ object RelevanceGate {
         return qualifiers.distinct()
     }
 
+    // ------------------------------------------------------------------
+    // Regras universais (valem para qualquer produto)
+    // ------------------------------------------------------------------
+
+    private val PARA_MARKER = Regex("\\b(para|pra|compativel com|compativel|adequado para|for)\\b")
+
+    /** Palavras de marketing que podem vir antes do produto e não contam como "produto principal". */
+    private val MARKETING_WORDS: Set<String> = setOf(
+        "novo", "nova", "novos", "novas", "original", "quente", "oferta", "promocao", "presente", "presentes",
+        "gift", "hot", "new", "venda", "frete", "gratis", "lancamento", "top", "melhor", "barato", "kit"
+    )
+
+    private val GENDER_WORDS: Set<String> = setOf(
+        "masculino", "masculina", "feminino", "feminina", "homem", "mulher", "infantil", "menino", "menina"
+    )
+
+    /** Grupos extras de sinônimos que complementam QueryIntentEngine.SYNONYM_GROUPS. */
+    private val EXTRA_SYNONYMS: List<Set<String>> = listOf(
+        setOf("capa", "capinha", "capas", "capinhas", "case", "cover"),
+        setOf("pelicula", "peliculas", "protetor de tela", "vidro temperado")
+    )
+
+    /**
+     * Padroniza unidades para comparar busca e título: "1L", "1 lt", "1 litros" -> "1 litro";
+     * "2m", "2 mts", "2 metros" -> "2 metro".
+     */
+    private fun canonUnits(text: String): String {
+        var t = text
+        t = Regex("\\b(\\d+(?:[.,]\\d+)?)\\s*(?:litros?|lts?|l)\\b").replace(t) { "${it.groupValues[1]} litro" }
+        t = Regex("\\b(\\d+(?:[.,]\\d+)?)\\s*(?:metros?|mts?|m)\\b").replace(t) { "${it.groupValues[1]} metro" }
+        return t
+    }
+
+    /** Singular simples em PT-BR: recarregaveis -> recarregavel, homens -> homem, pilhas -> pilha. */
+    private fun singular(word: String): String {
+        val w = word.trim()
+        return when {
+            w.length > 4 && w.endsWith("veis") -> w.dropLast(4) + "vel"
+            w.length > 4 && w.endsWith("ais") -> w.dropLast(3) + "al"
+            w.length > 4 && w.endsWith("oes") -> w.dropLast(3) + "ao"
+            w.length > 3 && w.endsWith("ns") -> w.dropLast(2) + "m"
+            w.length > 3 && w.endsWith("es") && !w.endsWith("ses") -> w.dropLast(1)
+            w.length > 3 && w.endsWith("s") -> w.dropLast(1)
+            else -> w
+        }
+    }
+
+    /** True se o termo aparece no texto: exato, sinônimo, plural/singular ou sinônimo extra. */
+    private fun tokenOk(token: String, text: String): Boolean {
+        if (QueryIntentEngine.tokenSatisfied(token, text)) return true
+        val words = text.split(" ").filter { it.isNotBlank() }
+        val stem = singular(token)
+        if (words.any { singular(it) == stem }) return true
+        for (group in EXTRA_SYNONYMS) {
+            if (group.any { it == token || singular(it) == stem }) {
+                if (group.any { syn -> if (syn.contains(" ")) text.contains(syn) else words.any { singular(it) == singular(syn) } }) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Um termo de acessório que aparece como descritor do produto principal não torna o título um acessório.
+     * Ex.: busca "bateria externa 20000mah" e título "Power Bank 20000mAh Carregador Portátil Bateria Externa":
+     * "carregador" descreve o produto, e a frase da busca ("bateria externa") aparece inteira no título.
+     * Continua rejeitando quando o acessório é o substantivo principal (começa o título ou vem antes de "para/de").
+     */
+    private fun isDescriptorNotAccessory(normTitle: String, normAcc: String, normQuery: String): Boolean {
+        if (normTitle.startsWith("$normAcc ") || normTitle.contains("$normAcc para ") || normTitle.contains("$normAcc de ")) {
+            return false
+        }
+        val alphaTokens = extractSignificantTerms(normQuery)
+            .filter { t -> t.all { it.isLetter() } && t !in GENDER_WORDS }
+        if (alphaTokens.size < 2) return false
+        return normTitle.contains(alphaTokens.joinToString(" "))
+    }
+
+    /** Remove expressões de itens inclusos ("com controle remoto", "com dissipador") antes da checagem de acessório. */
+    private fun stripIncludedAccessories(normTitle: String): String {
+        return Regex(
+            "\\bcom (controle remoto|fonte|cabo|carregador|baterias?|adaptador|suporte|estojo|case|capa|dissipador|ventoinha|cooler|tripe|microfone)\\b"
+        ).replace(normTitle, " ")
+    }
+
+    /**
+     * Regra universal do "para": se o título tem "para/compatível com/for", o produto principal vem antes.
+     * Quando nenhum termo da busca aparece nesse trecho, o título descreve acessório/peça/refil.
+     */
+    private fun isAccessoryByParaRule(normTitle: String, normQuery: String): Boolean {
+        val m = PARA_MARKER.find(normTitle) ?: return false
+        val prefixWords = normTitle.substring(0, m.range.first)
+            .split(" ")
+            .filter { it.isNotBlank() && it !in MARKETING_WORDS && !it.matches(Regex("\\d{4}")) }
+        if (prefixWords.isEmpty()) return false
+
+        val prefix = prefixWords.joinToString(" ")
+        val tokens = extractSignificantTerms(normQuery).filter { it !in GENDER_WORDS }
+        if (tokens.isEmpty()) return false
+
+        return tokens.none { tokenOk(it, prefix) }
+    }
+
+    /**
+     * Identifica itens em potencial "zona cinzenta" para auditoria complementar via Gemini.
+     */
+    fun isGrayZone(title: String, query: String, intent: QueryIntent): Boolean {
+        val normTitle = normalize(title)
+        val normQuery = normalize(query)
+
+        val hasPara = listOf(" para ", " compativel com ", " compatível com ", " adequado para ", " for ")
+            .any { normTitle.contains(it) }
+
+        val hasUniversalAccessory = QueryIntentEngine.UNIVERSAL_ACCESSORIES.any { acc ->
+            val normAcc = normalize(acc)
+            normAcc.length >= 3 && containsWordOrPhrase(normTitle, normAcc)
+        }
+
+        val queryHasAccessory = QueryIntentEngine.UNIVERSAL_ACCESSORIES.any { acc ->
+            val normAcc = normalize(acc)
+            normAcc.length >= 3 && containsWordOrPhrase(normQuery, normAcc)
+        }
+
+        return hasPara || hasUniversalAccessory || queryHasAccessory
+    }
+
     /**
      * Extrai termos significativos removendo palavras vazias.
      */
-    private fun extractSignificantTerms(normQuery: String): List<String> {
+    fun extractSignificantTerms(normQuery: String): List<String> {
         return normQuery.split("\\s+".toRegex())
             .map { it.trim() }
             .filter { it.length >= 2 && !STOP_WORDS.contains(it) }

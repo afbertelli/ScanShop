@@ -92,6 +92,40 @@ class AiSearchService {
         private const val GEMINI_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
+        fun getApiKey(): String {
+            return try {
+                val keyFromBuildConfig = try {
+                    BuildConfig::class.java.getField("GEMINI_API_KEY").get(null) as? String ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                if (keyFromBuildConfig.isNotBlank() &&
+                    keyFromBuildConfig != "YOUR_GEMINI_API_KEY" &&
+                    keyFromBuildConfig != "DEFAULT_GEMINI_KEY"
+                ) {
+                    return keyFromBuildConfig
+                }
+
+                val envKeyField = try {
+                    BuildConfig::class.java.getField("GEMINI_ENV_KEY").get(null) as? String ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                if (envKeyField.isNotBlank() && envKeyField != "YOUR_GEMINI_API_KEY") {
+                    return envKeyField
+                }
+
+                val systemEnv = System.getenv("GEMINI_API_KEY") ?: ""
+                if (systemEnv.isNotBlank() && systemEnv != "YOUR_GEMINI_API_KEY" && !systemEnv.startsWith("AQ.")) {
+                    return systemEnv
+                }
+
+                ""
+            } catch (e: Exception) {
+                ""
+            }
+        }
+
         // Canonical Category Synonyms
         val CATEGORY_SYNONYMS: Map<String, Set<String>> = mapOf(
             // Hardware & Eletrônicos
@@ -1154,39 +1188,7 @@ class AiSearchService {
         .writeTimeout(3, TimeUnit.SECONDS)
         .build()
 
-    private fun getApiKey(): String {
-        return try {
-            val keyFromBuildConfig = try {
-                BuildConfig::class.java.getField("GEMINI_API_KEY").get(null) as? String ?: ""
-            } catch (e: Exception) {
-                ""
-            }
-            if (keyFromBuildConfig.isNotBlank() &&
-                keyFromBuildConfig != "YOUR_GEMINI_API_KEY" &&
-                keyFromBuildConfig != "DEFAULT_GEMINI_KEY"
-            ) {
-                return keyFromBuildConfig
-            }
-
-            val envKeyField = try {
-                BuildConfig::class.java.getField("GEMINI_ENV_KEY").get(null) as? String ?: ""
-            } catch (e: Exception) {
-                ""
-            }
-            if (envKeyField.isNotBlank() && envKeyField != "YOUR_GEMINI_API_KEY") {
-                return envKeyField
-            }
-
-            val systemEnv = System.getenv("GEMINI_API_KEY") ?: ""
-            if (systemEnv.isNotBlank() && systemEnv != "YOUR_GEMINI_API_KEY" && !systemEnv.startsWith("AQ.")) {
-                return systemEnv
-            }
-
-            ""
-        } catch (e: Exception) {
-            ""
-        }
-    }
+    private fun getApiKey(): String = Companion.getApiKey()
 
     /**
      * Analisador Inteligente de Busca:
@@ -1983,10 +1985,35 @@ class AiSearchService {
             }
         }
 
+        val allApprovedProds = (refinedAli + refinedShopee)
+        val grayZoneProds = allApprovedProds.filter { RelevanceGate.isGrayZone(it.title, query, intent) }.take(30)
+        val auditMap: Map<String, Boolean> = if (grayZoneProds.isNotEmpty()) {
+            val auditor = RelevanceGate.grayZoneAuditor ?: com.example.data.repository.RealGeminiGrayZoneAuditor()
+            auditor.auditBatch(query, grayZoneProds.map { it.id to it.title })
+        } else {
+            emptyMap()
+        }
+
+        val finalAliFiltered = refinedAli.filter { prod ->
+            if (RelevanceGate.isGrayZone(prod.title, query, intent)) {
+                auditMap[prod.id] == true
+            } else {
+                true
+            }
+        }
+
+        val finalShopeeFiltered = refinedShopee.filter { prod ->
+            if (RelevanceGate.isGrayZone(prod.title, query, intent)) {
+                auditMap[prod.id] == true
+            } else {
+                true
+            }
+        }
+
         val updatedInsight = insight.copy(filteredAccessoriesCount = filteredAccessories)
 
-        val finalAli = refinedAli.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
-        val finalShopee = refinedShopee.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        val finalAli = finalAliFiltered.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
+        val finalShopee = finalShopeeFiltered.sortedWith(compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice })
 
         val combined = (finalAli + finalShopee).sortedWith(
             compareByDescending<Product> { it.isExactAiMatch }.thenBy { it.promoPrice }
