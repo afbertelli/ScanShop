@@ -116,30 +116,33 @@ object RelevanceGate {
             return GateResult(false, genderConflict)
         }
 
-        // 5. Validação Estrita de Marca
-        val detectedBrand = intent.detectedBrand
-        if (!detectedBrand.isNullOrBlank()) {
-            val normBrand = normalize(detectedBrand)
-            val brandAliases = (intent.brandAliases + (QueryIntentEngine.KNOWN_BRANDS[normBrand] ?: emptySet()))
-                .map { normalize(it) }
-                .toSet()
+        // 4.5. Pares Opostos de Conexão e Tecnologia
+        val queryHasWireless = listOf("sem fio", "sem-fio", "semfio", "wireless", "bluetooth").any { containsWordOrPhrase(normQuery, it) }
+        val queryHasWired = listOf("com fio", "com-fio", "wired", "fio usb", "cabo usb", "p2").any { containsWordOrPhrase(normQuery, it) }
+        val titleHasWireless = listOf("sem fio", "sem-fio", "semfio", "wireless", "bluetooth", "2.4g", "tws").any { containsWordOrPhrase(normTitle, it) }
+        val titleHasWired = listOf("com fio", "com-fio", "wired", "fio usb", "cabo usb", "p2").any { containsWordOrPhrase(normTitle, it) }
 
-            val brandMatched = brandAliases.any { alias ->
-                containsWordOrPhrase(normTitle, alias) || compactTitle.contains(alias.replace("[^a-z0-9]".toRegex(), ""))
-            }
-
-            if (!brandMatched) {
-                return GateResult(false, "Marca '$detectedBrand' não encontrada no título")
-            }
-
-            // Verifica se uma marca concorrente foi colocada no título sem a marca solicitada
-            val conflictingBrand = findConflictingBrand(normTitle, normBrand, brandAliases)
-            if (conflictingBrand != null) {
-                return GateResult(false, "Marca conflitante detectada ('$conflictingBrand') em vez de '$detectedBrand'")
-            }
+        if (queryHasWireless && titleHasWired && !titleHasWireless) {
+            return GateResult(false, "Conflito de conexão: busca pediu sem fio/wireless/bluetooth, mas título indica produto com fio")
+        }
+        if (queryHasWired && titleHasWireless && !titleHasWired) {
+            return GateResult(false, "Conflito de conexão: busca pediu produto com fio, mas título indica sem fio")
         }
 
-        // 6. Validação de Modelo / Código Alfanumérico
+        val queryHasMechanical = listOf("mecanico", "mecanica", "mechanical").any { containsWordOrPhrase(normQuery, it) }
+        val queryHasMembrane = listOf("membrana", "membrane").any { containsWordOrPhrase(normQuery, it) }
+        val titleHasMechanical = listOf("mecanico", "mecanica", "mechanical").any { containsWordOrPhrase(normTitle, it) }
+        val titleHasMembrane = listOf("membrana", "membrane").any { containsWordOrPhrase(normTitle, it) }
+
+        if (queryHasMechanical && titleHasMembrane && !titleHasMechanical) {
+            return GateResult(false, "Conflito de tecnologia: busca pediu teclado mecânico, mas título indica membrana")
+        }
+        if (queryHasMembrane && titleHasMechanical && !queryHasMechanical) {
+            return GateResult(false, "Conflito de tecnologia: busca pediu membrana, mas título indica mecânico")
+        }
+
+        // 5. Validação de Marca (com exceção para marca deduzida por chip/modelo)
+        val detectedBrand = intent.detectedBrand
         val detectedModel = intent.detectedHardwareModel
         val queryModelTokens = extractModelTokens(normQuery)
         val targetModels = if (!detectedModel.isNullOrBlank()) {
@@ -148,17 +151,67 @@ object RelevanceGate {
             queryModelTokens
         }
 
+        if (!detectedBrand.isNullOrBlank()) {
+            val normBrand = normalize(detectedBrand)
+
+            // Verifica se o usuário digitou explicitamente a marca na busca
+            val userTypedBrandExplicitly = containsWordOrPhrase(normQuery, normBrand) ||
+                    (normBrand == "apple" && containsWordOrPhrase(normQuery, "apple")) ||
+                    (normBrand == "samsung" && containsWordOrPhrase(normQuery, "samsung")) ||
+                    (normBrand == "xiaomi" && containsWordOrPhrase(normQuery, "xiaomi")) ||
+                    (normBrand == "intel" && containsWordOrPhrase(normQuery, "intel")) ||
+                    (normBrand == "amd" && containsWordOrPhrase(normQuery, "amd")) ||
+                    (normBrand == "nvidia" && containsWordOrPhrase(normQuery, "nvidia"))
+
+            // Se a marca foi deduzida de um modelo/chip (RTX/GTX -> NVIDIA; RX/Radeon/Ryzen -> AMD; etc.)
+            val isDeducedBrandFromModel = !userTypedBrandExplicitly && isBrandDeducedFromModel(normQuery, normBrand)
+
+            val modelPresentInTitle = targetModels.any { modelToken ->
+                val normModel = normalize(modelToken)
+                val compactModel = normModel.replace("[^a-z0-9]".toRegex(), "")
+                containsWordOrPhrase(normTitle, normModel) || (compactModel.length >= 2 && compactTitle.contains(compactModel))
+            } || containsWordOrPhrase(normTitle, "rtx") || containsWordOrPhrase(normTitle, "gtx") ||
+               containsWordOrPhrase(normTitle, "rx") || containsWordOrPhrase(normTitle, "ryzen") ||
+               containsWordOrPhrase(normTitle, "xeon") || containsWordOrPhrase(normTitle, "iphone") ||
+               containsWordOrPhrase(normTitle, "galaxy") || containsWordOrPhrase(normTitle, "redmi") ||
+               containsWordOrPhrase(normTitle, "poco")
+
+            val skipBrandRequirement = isDeducedBrandFromModel && modelPresentInTitle
+
+            if (!skipBrandRequirement) {
+                val brandAliases = (intent.brandAliases + (QueryIntentEngine.KNOWN_BRANDS[normBrand] ?: emptySet()) + setOf(normBrand))
+                    .map { normalize(it) }
+                    .toSet()
+
+                val brandMatched = brandAliases.any { alias ->
+                    containsWordOrPhrase(normTitle, alias) || compactTitle.contains(alias.replace("[^a-z0-9]".toRegex(), ""))
+                }
+
+                if (!brandMatched) {
+                    return GateResult(false, "Marca '$detectedBrand' não encontrada no título")
+                }
+            }
+
+            // Sempre verifica se uma marca concorrente foi colocada no título
+            val brandAliasesForConflict = (intent.brandAliases + (QueryIntentEngine.KNOWN_BRANDS[normBrand] ?: emptySet()) + setOf(normBrand))
+                .map { normalize(it) }
+                .toSet()
+            val conflictingBrand = findConflictingBrand(normTitle, normBrand, brandAliasesForConflict)
+            if (conflictingBrand != null) {
+                return GateResult(false, "Marca conflitante detectada ('$conflictingBrand') em vez de '$detectedBrand'")
+            }
+        }
+
+        // 6. Validação de Modelo / Código Alfanumérico
         for (modelToken in targetModels) {
             val normModel = normalize(modelToken)
             val compactModel = normModel.replace("[^a-z0-9]".toRegex(), "")
             if (compactModel.length >= 2) {
-                // O modelo deve aparecer no título (com ou sem pontuação/espaços)
                 val modelFound = containsWordOrPhrase(normTitle, normModel) || compactTitle.contains(compactModel)
                 if (!modelFound) {
                     return GateResult(false, "Modelo '$modelToken' pesquisado não encontrado no título")
                 }
 
-                // Verifica se há modelo conflitante da mesma família (ex: pesquisou x99 e veio b450; pesquisou iphone 13 e veio iphone 12)
                 val modelConflict = checkModelConflict(normQuery, normTitle, normModel)
                 if (modelConflict != null) {
                     return GateResult(false, modelConflict)
@@ -166,14 +219,13 @@ object RelevanceGate {
             }
         }
 
-        // 7. Validação de Números com Unidade ou Tamanho (ex: 43 polegadas, 128gb, 16gb, ddr4, 144hz, 6 xícaras)
+        // 7. Validação de Números com Unidade ou Tamanho (ex: 43 polegadas, 16gb, 1tb, 144hz, 6 xícaras)
         val unitSpecs = extractUnitSpecs(normQuery)
         for (spec in unitSpecs) {
             val normSpec = normalize(spec)
             val compactSpec = normSpec.replace("[^a-z0-9]".toRegex(), "")
             val specFound = containsWordOrPhrase(normTitle, normSpec) || compactTitle.contains(compactSpec)
             if (!specFound) {
-                // Tenta mapear equivalências como 43" ou 43 pol
                 val altFound = checkUnitEquivalence(normTitle, normSpec)
                 if (!altFound) {
                     return GateResult(false, "Especificação ou tamanho '$spec' não encontrado no título")
@@ -184,14 +236,31 @@ object RelevanceGate {
         // 8. Validação de Categoria e Indicadores Obrigatórios
         val detectedCat = intent.detectedCategory
         if (!detectedCat.isNullOrBlank()) {
-            val requiredIndicators = intent.requiredCategoryIndicators
-            if (requiredIndicators.isNotEmpty()) {
-                val hasIndicator = requiredIndicators.any { ind ->
-                    val normInd = normalize(ind)
-                    containsWordOrPhrase(normTitle, normInd) || compactTitle.contains(normInd.replace("[^a-z0-9]".toRegex(), ""))
+            if (detectedCat == "smartwatch" || normQuery.contains("smartwatch") || normQuery.contains("smart watch")) {
+                val smartWatchExplicit = listOf("smartwatch", "smart watch", "relogio inteligente", "smartband", "smart band")
+                    .any { containsWordOrPhrase(normTitle, it) || compactTitle.contains(it.replace(" ", "")) }
+
+                val hasWatchBase = containsWordOrPhrase(normTitle, "relogio") || containsWordOrPhrase(normTitle, "watch")
+                val smartMarkers = listOf(
+                    "bluetooth", "chamada", "chamadas", "nfc", "gps", "fitness", "monitor cardiaco", "cardiaco",
+                    "amoled", "android", "ios", "notificac", "notificacao", "passos", "esporte", "tracker",
+                    "pressao", "oximetro", "spo2", "app", "aplicativo", "touch"
+                )
+                val hasSmartMarker = smartMarkers.any { containsWordOrPhrase(normTitle, it) }
+
+                if (!smartWatchExplicit && !(hasWatchBase && hasSmartMarker)) {
+                    return GateResult(false, "Relógio tradicional/analógico não aceito para busca de smartwatch")
                 }
-                if (!hasIndicator) {
-                    return GateResult(false, "Nenhum indicador da categoria '$detectedCat' encontrado no título")
+            } else {
+                val requiredIndicators = intent.requiredCategoryIndicators
+                if (requiredIndicators.isNotEmpty()) {
+                    val hasIndicator = requiredIndicators.any { ind ->
+                        val normInd = normalize(ind)
+                        containsWordOrPhrase(normTitle, normInd) || compactTitle.contains(normInd.replace("[^a-z0-9]".toRegex(), ""))
+                    }
+                    if (!hasIndicator) {
+                        return GateResult(false, "Nenhum indicador da categoria '$detectedCat' encontrado no título")
+                    }
                 }
             }
         }
@@ -200,7 +269,6 @@ object RelevanceGate {
         if (intent.minPriceGuard > 0.0 && price > 0.0) {
             val threshold = intent.minPriceGuard * 0.40
             if (price < threshold) {
-                // Se o preço for muito baixo e o título tiver menção a peça, reposição ou componente avulso
                 val partKeywords = listOf("peca", "reposicao", "parafuso", "modulo", "conector", "espelho", "tpm")
                 if (partKeywords.any { normTitle.contains(it) }) {
                     return GateResult(false, "Preço (R$ $price) muito abaixo do mínimo esperado para a categoria (R$ ${intent.minPriceGuard}) com indicação de peça avulsa")
@@ -208,31 +276,17 @@ object RelevanceGate {
             }
         }
 
-        // 10. Busca Sem Marca, Categoria ou Modelo Detectados (ex: 'cafeteira italiana 6 xicaras')
-        // Exige que TODOS os termos significativos apareçam no título (tolera 1 termo ausente apenas para 4+ termos)
-        if (detectedBrand.isNullOrBlank() && detectedCat.isNullOrBlank() && targetModels.isEmpty()) {
-            val significantTerms = extractSignificantTerms(normQuery)
-            if (significantTerms.isNotEmpty()) {
-                var missingCount = 0
-                val missingTerms = mutableListOf<String>()
-
-                for (term in significantTerms) {
-                    val satisfied = QueryIntentEngine.tokenSatisfied(term, normTitle) ||
-                            containsWordOrPhrase(normTitle, term) ||
-                            compactTitle.contains(term)
-                    if (!satisfied) {
-                        missingCount++
-                        missingTerms.add(term)
-                    }
-                }
-
-                val maxToleratedMissing = if (significantTerms.size >= 4) 1 else 0
-                if (missingCount > maxToleratedMissing) {
-                    return GateResult(
-                        false,
-                        "Termos significativos ausentes no título: ${missingTerms.joinToString(", ")}"
-                    )
-                }
+        // 10. Qualificadores Obrigatórios (Estendido para todas as buscas)
+        val remainingQualifiers = extractRemainingQualifiers(normQuery, intent, targetModels, unitSpecs)
+        for (qualifier in remainingQualifiers) {
+            val satisfied = QueryIntentEngine.tokenSatisfied(qualifier, normTitle) ||
+                    containsWordOrPhrase(normTitle, qualifier) ||
+                    compactTitle.contains(qualifier.replace(" ", ""))
+            if (!satisfied) {
+                return GateResult(
+                    false,
+                    "Qualificador obrigatório '$qualifier' da busca não encontrado no título"
+                )
             }
         }
 
@@ -249,7 +303,7 @@ object RelevanceGate {
         val nfd = Normalizer.normalize(text, Normalizer.Form.NFD)
         return nfd.replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
             .lowercase(Locale.ROOT)
-            .replace("[_\\-/]+".toRegex(), " ")
+            .replace("[_\\-/(),;!?\\[\\]{}]+".toRegex(), " ")
             .replace("\\s+".toRegex(), " ")
             .trim()
     }
@@ -283,15 +337,49 @@ object RelevanceGate {
      * Ex: 'Mouse Gamer ... com cabo trançado' ou 'Placa Mãe ... suporte a LGA 2011'
      */
     private fun isFalsePositiveAccessory(normTitle: String, normAcc: String, intent: QueryIntent): Boolean {
+        val isMainNoun = normTitle.startsWith(normAcc) ||
+                normTitle.startsWith("$normAcc ") ||
+                normTitle.contains("$normAcc para ") ||
+                normTitle.contains("$normAcc de ") ||
+                normTitle.contains("$normAcc p/ ")
+
+        // Se o acessório for o substantivo principal da frase, NUNCA é falso positivo (é acessório real)
+        if (isMainNoun) {
+            return false
+        }
+
+        // 1. Memória RAM com dissipador
+        if (normAcc in listOf("dissipador", "dissipadores", "heatsink")) {
+            val hasRamEvidence = (normTitle.contains("ram") || normTitle.contains("memoria") || normTitle.contains("ddr")) &&
+                    (normTitle.contains("ddr3") || normTitle.contains("ddr4") || normTitle.contains("ddr5") || normTitle.contains("dimm"))
+            if (hasRamEvidence) {
+                return true
+            }
+        }
+
+        // 2. Placa de vídeo com ventoinha / fan / cooler / dual fan
+        if (normAcc in listOf("ventoinha", "ventoinhas", "fan", "fans", "cooler", "coolers", "ventilador")) {
+            val hasGpuEvidence = (normTitle.contains("rtx") || normTitle.contains("gtx") || normTitle.contains("rx ") ||
+                    normTitle.contains("placa de video") || normTitle.contains("placa grafica") || normTitle.contains("gpu")) &&
+                    (normTitle.contains("gb") || normTitle.contains("gddr"))
+            if (hasGpuEvidence) {
+                return true
+            }
+        }
+
+        // 3. Mouses e Periféricos com cabo, switch, grip tape, skates ou pezinhos
         if (normAcc.contains("cabo") || normAcc.contains("fio") || normAcc.contains("switch") ||
             normAcc.contains("grip tape") || normAcc.contains("tape") || normAcc.contains("skate") ||
             normAcc.contains("pezinho")) {
-            val isMainProduct = intent.requiredCategoryIndicators.any { containsWordOrPhrase(normTitle, it) }
+            val isMainProduct = intent.requiredCategoryIndicators.any { containsWordOrPhrase(normTitle, it) } ||
+                    normTitle.contains("mouse") || normTitle.contains("teclado")
             val isAccessoryFirst = normTitle.startsWith(normAcc) || normTitle.contains("$normAcc para") || normTitle.contains("$normAcc de")
             if (isMainProduct && !isAccessoryFirst) {
                 return true
             }
         }
+
+        // 4. Placas-mãe, Monitores ou TVs mencionando suporte técnico (ex: suporte a LGA, suporte VESA)
         if (normAcc in listOf("suporte", "suportes")) {
             val isSupportSpec = normTitle.contains("suporte a") ||
                     normTitle.contains("suporte ddr") ||
@@ -299,11 +387,14 @@ object RelevanceGate {
                     normTitle.contains("suporte vesa") ||
                     normTitle.contains("suporte ajustavel") ||
                     normTitle.contains("com suporte")
-            val isMainProduct = intent.requiredCategoryIndicators.any { containsWordOrPhrase(normTitle, it) }
+            val isMainProduct = intent.requiredCategoryIndicators.any { containsWordOrPhrase(normTitle, it) } ||
+                    normTitle.contains("placa mae") || normTitle.contains("monitor") || normTitle.contains("tv")
             if (isSupportSpec && isMainProduct && !normTitle.startsWith("suporte ") && !normTitle.contains("suporte de ") && !normTitle.contains("suporte para ")) {
                 return true
             }
         }
+
+        // 5. Produtos com adaptador incluso
         if (normAcc in listOf("adaptador", "adaptadores")) {
             val isAdapterIncluded = normTitle.contains("com adaptador") || normTitle.contains("adaptador incluso")
             val isMainProduct = intent.requiredCategoryIndicators.any { containsWordOrPhrase(normTitle, it) }
@@ -311,6 +402,7 @@ object RelevanceGate {
                 return true
             }
         }
+
         return false
     }
 
@@ -387,6 +479,10 @@ object RelevanceGate {
         // 2. Termos alfanuméricos isolados que contêm dígitos e letras (ex: x99, b450)
         val rawTokens = normQuery.split("\\s+".toRegex())
         for (t in rawTokens) {
+            // Ignora capacidades de memória/armazenamento e frequências/tamanhos (ex: 16gb, 1tb, 144hz, 43pol, 4k)
+            if (t.matches("\\d+(?:gb|tb|mb|hz|pol|k|w|v|mah|g|xicaras?)".toRegex())) {
+                continue
+            }
             if (t.any { it.isDigit() } && t.any { it.isLetter() } && t.length >= 3) {
                 tokens.add(t)
             }
@@ -419,6 +515,22 @@ object RelevanceGate {
             val titleMobo = moboChips.firstOrNull { normTitle.contains(it) }
             if (titleMobo != null && titleMobo != searchedMobo) {
                 return "Chipset de placa-mãe divergente: pesquisado $searchedMobo, encontrado $titleMobo"
+            }
+        }
+
+        // Processadores Intel (ex: i5 12400 vs i3 10100)
+        val intelCoreMatchQuery = "\\b(i3|i5|i7|i9)\\b".toRegex().find(normQuery)
+        val intelCoreMatchTitle = "\\b(i3|i5|i7|i9)\\b".toRegex().find(normTitle)
+        if (intelCoreMatchQuery != null && intelCoreMatchTitle != null && intelCoreMatchQuery.value != intelCoreMatchTitle.value) {
+            return "Família de processador divergente: pesquisado ${intelCoreMatchQuery.value}, encontrado ${intelCoreMatchTitle.value}"
+        }
+
+        // AirPods (ex: airpods pro 2 vs airpods 3)
+        if (normQuery.contains("airpods")) {
+            val airpodsProQuery = normQuery.contains("pro")
+            val airpodsProTitle = normTitle.contains("pro")
+            if (airpodsProQuery && !airpodsProTitle) {
+                return "Modelo AirPods divergente: pesquisado AirPods Pro, encontrado modelo comum"
             }
         }
 
@@ -458,9 +570,15 @@ object RelevanceGate {
     }
 
     /**
-     * Verifica equivalências de unidades como 43 polegadas <-> 43" <-> 43 pol <-> 43pol.
+     * Verifica equivalências de unidades como 43 polegadas <-> 43" <-> 43 pol, e capacidades de memória/armazenamento.
      */
     private fun checkUnitEquivalence(normTitle: String, spec: String): Boolean {
+        if (spec.contains("gb") || spec.contains("tb") || spec.contains("g")) {
+            if (checkCapacityEquivalence(normTitle, spec)) {
+                return true
+            }
+        }
+
         val numberMatch = "\\d+".toRegex().find(spec) ?: return false
         val num = numberMatch.value
         val patterns = listOf(
@@ -468,6 +586,165 @@ object RelevanceGate {
             "${num}pol", "$num-polegadas", "tamanho $num"
         )
         return patterns.any { normTitle.contains(it) } || containsWordOrPhrase(normTitle, num)
+    }
+
+    /**
+     * Verifica equivalências de capacidade (ex: 16gb aceita 16G, 16 GB, e kits 2x8GB).
+     */
+    private fun checkCapacityEquivalence(normTitle: String, spec: String): Boolean {
+        val cleanSpec = spec.lowercase(Locale.ROOT).replace("\\s+".toRegex(), "")
+
+        if (cleanSpec == "1tb" || cleanSpec == "1000gb" || cleanSpec == "1024gb") {
+            val tbPatterns = listOf(
+                "\\b1\\s*tb\\b".toRegex(),
+                "\\b1\\s*t\\b".toRegex(),
+                "\\b1000\\s*gb?\\b".toRegex(),
+                "\\b1024\\s*gb?\\b".toRegex(),
+                "\\b1\\s*tera\\b".toRegex()
+            )
+            return tbPatterns.any { it.containsMatchIn(normTitle) }
+        }
+
+        val gbMatch = "(\\d+)\\s*g[b]?".toRegex().find(cleanSpec) ?: return false
+        val targetGb = gbMatch.groupValues[1].toIntOrNull() ?: return false
+
+        // 1. Notação direta: 16gb, 16 gb, 16g, 16 g
+        val directPatterns = listOf(
+            "\\b$targetGb\\s*gb\\b".toRegex(),
+            "\\b$targetGb\\s*g\\b".toRegex(),
+            "\\b$targetGb\\s*gigas?\\b".toRegex()
+        )
+        if (directPatterns.any { it.containsMatchIn(normTitle) }) {
+            return true
+        }
+
+        // 2. Kits: 2x8GB, 2x8G, 2 x 8 gb, 4x4GB, etc.
+        val kitRegex = "(\\d+)\\s*[x*]\\s*(\\d+)\\s*g[b]?".toRegex()
+        for (m in kitRegex.findAll(normTitle)) {
+            val count = m.groupValues[1].toIntOrNull() ?: continue
+            val each = m.groupValues[2].toIntOrNull() ?: continue
+            if (count * each == targetGb) {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    /**
+     * Identifica se a marca foi deduzida a partir de um chip ou modelo na busca.
+     */
+    private fun isBrandDeducedFromModel(normQuery: String, normBrand: String): Boolean {
+        return when (normBrand) {
+            "nvidia" -> listOf("rtx", "gtx", "geforce").any { containsWordOrPhrase(normQuery, it) }
+            "amd" -> listOf("rx", "radeon", "ryzen").any { containsWordOrPhrase(normQuery, it) }
+            "intel" -> listOf("core i", "i3", "i5", "i7", "i9", "xeon").any { containsWordOrPhrase(normQuery, it) }
+            "apple" -> listOf("iphone", "airpods", "ipad", "macbook").any { containsWordOrPhrase(normQuery, it) }
+            "samsung" -> listOf("galaxy").any { containsWordOrPhrase(normQuery, it) }
+            "xiaomi" -> listOf("redmi", "poco", "mi band").any { containsWordOrPhrase(normQuery, it) }
+            else -> false
+        }
+    }
+
+    /**
+     * Extrai termos qualificadores obrigatórios que sobram na busca após remover marca, modelo, categoria e unidade.
+     */
+    private fun extractRemainingQualifiers(
+        normQuery: String,
+        intent: QueryIntent,
+        targetModels: List<String>,
+        unitSpecs: List<String>
+    ): List<String> {
+        var q = normQuery
+
+        val qualifiers = mutableListOf<String>()
+        val compoundQualifiers = listOf(
+            "sem fio", "sem-fio", "com fio", "com-fio",
+            "micro switch", "grip tape", "ar condicionado"
+        )
+        for (compound in compoundQualifiers) {
+            if (q.contains(compound)) {
+                qualifiers.add(compound)
+                q = q.replace(compound, " ")
+            }
+        }
+
+        for (spec in unitSpecs) {
+            val normSpec = normalize(spec)
+            q = q.replace(normSpec, " ")
+            val numOnly = "\\d+".toRegex().find(normSpec)?.value
+            if (numOnly != null) {
+                q = q.replace("\\b$numOnly\\b".toRegex(), " ")
+            }
+        }
+
+        for (m in targetModels) {
+            val normModel = normalize(m)
+            q = q.replace(normModel, " ")
+            for (part in normModel.split("\\s+".toRegex())) {
+                if (part.length >= 2) {
+                    q = q.replace("\\b${Regex.escape(part)}\\b".toRegex(), " ")
+                }
+            }
+        }
+
+        val detectedBrand = intent.detectedBrand
+        if (!detectedBrand.isNullOrBlank()) {
+            val normBrand = normalize(detectedBrand)
+            q = q.replace("\\b${Regex.escape(normBrand)}\\b".toRegex(), " ")
+            for (alias in intent.brandAliases) {
+                val normAlias = normalize(alias)
+                q = q.replace("\\b${Regex.escape(normAlias)}\\b".toRegex(), " ")
+            }
+        }
+
+        val detectedCat = intent.detectedCategory
+        if (!detectedCat.isNullOrBlank()) {
+            val catWords = when (detectedCat) {
+                "mouse" -> listOf("mouse", "mouses", "rato", "mice")
+                "teclado" -> listOf("teclado", "teclados", "keyboard")
+                "fone" -> listOf("fone", "fones", "headset", "headphone", "earbuds", "earphones", "tws", "ouvido")
+                "smartwatch" -> listOf("smartwatch", "smart watch", "relogio", "watch", "smartband", "band", "inteligente")
+                "smart tv" -> listOf("smart tv", "smarttv", "smartv", "tv", "televisao", "televisor", "television", "smart")
+                "monitor" -> listOf("monitor", "monitores", "display", "screen", "pc", "computador", "desktop")
+                "celular" -> listOf("celular", "celulares", "smartphone", "smartphones", "telefone", "phone")
+                "notebook" -> listOf("notebook", "notebooks", "laptop", "laptops")
+                "cadeira" -> listOf("cadeira", "cadeiras", "poltrona")
+                "placa mae" -> listOf("placa mae", "placa-mae", "motherboard", "mainboard", "mobo", "placa", "mae")
+                "placa de video" -> listOf("placa de video", "placa grafica", "gpu", "video", "placa", "grafica", "rtx", "gtx", "rx", "radeon")
+                "processador" -> listOf("processador", "cpu", "processadores", "intel", "amd")
+                "memoria ram" -> listOf("memoria ram", "memória ram", "memoria", "memória", "ram", "ddr3", "ddr4", "ddr5")
+                "ssd" -> listOf("ssd", "nvme", "m.2", "disco solido")
+                "gabinete" -> listOf("gabinete", "chassi", "case")
+                "cooler" -> listOf("cooler", "coolers", "refrigeracao")
+                "fonte" -> listOf("fonte", "psu", "power supply")
+                "camera" -> listOf("camera", "câmera", "cam")
+                "drone" -> listOf("drone", "quadcopter")
+                "projetor" -> listOf("projetor", "projector")
+                "tablet" -> listOf("tablet", "ipad", "pad")
+                else -> listOf(detectedCat)
+            }
+            for (cw in catWords) {
+                val normCw = normalize(cw)
+                if (normCw.contains(" ")) {
+                    q = q.replace(normCw, " ")
+                } else {
+                    q = q.replace("\\b${Regex.escape(normCw)}\\b".toRegex(), " ")
+                }
+            }
+        }
+
+        q = q.replace("\\b(masculino|feminino|homem|mulher|infantil|menino|menina)\\b".toRegex(), " ")
+
+        val remainingTokens = q.split("\\s+".toRegex())
+            .map { it.trim().replace("[^a-z0-9]".toRegex(), "") }
+            .filter { it.length >= 2 && !STOP_WORDS.contains(it) }
+
+        for (token in remainingTokens) {
+            qualifiers.add(token)
+        }
+
+        return qualifiers.distinct()
     }
 
     /**

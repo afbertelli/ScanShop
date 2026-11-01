@@ -179,4 +179,73 @@ class RelevanceGateTest {
             assertFalse(prod.title.contains("B450", ignoreCase = true))
         }
     }
+
+    @Test
+    fun testCenariosRejeicaoNovos() {
+        // mouse gamer | Mouse Sem Fio Silencioso Escritório Ergonômico Vertical 1600DPI
+        assertFalse(checkRelevance("Mouse Sem Fio Silencioso Escritório Ergonômico Vertical 1600DPI", "mouse gamer"))
+
+        // mouse sem fio | Mouse com fio USB Óptico 1200DPI
+        assertFalse(checkRelevance("Mouse com fio USB Óptico 1200DPI", "mouse sem fio"))
+
+        // teclado mecanico | Teclado USB com fio de membrana ABNT2 escritório
+        assertFalse(checkRelevance("Teclado USB com fio de membrana ABNT2 escritório", "teclado mecanico"))
+
+        // fone bluetooth | Fone de ouvido com fio P2 3.5mm com microfone
+        assertFalse(checkRelevance("Fone de ouvido com fio P2 3.5mm com microfone", "fone bluetooth"))
+
+        // smartwatch | Relógio de Pulso Masculino Quartzo Analógico Aço Inoxidável
+        assertFalse(checkRelevance("Relógio de Pulso Masculino Quartzo Analógico Aço Inoxidável", "smartwatch"))
+
+        // notebook gamer | Notebook Intel Celeron 4GB 128GB escritório estudante
+        assertFalse(checkRelevance("Notebook Intel Celeron 4GB 128GB escritório estudante", "notebook gamer"))
+
+        // ssd 1tb | Caixa Externa Enclosure para SSD M.2 NVMe 1TB USB-C
+        assertFalse(checkRelevance("Caixa Externa Enclosure para SSD M.2 NVMe 1TB USB-C", "ssd 1tb"))
+
+        // cadeira gamer | Cadeira de Escritório Giratória Malha Ergonômica
+        assertFalse(checkRelevance("Cadeira de Escritório Giratória Malha Ergonômica", "cadeira gamer"))
+    }
+
+    @Test
+    fun testCenariosAceitacaoNovos() {
+        // memoria ram 16gb | Memória RAM 16G DDR4 3200MHz Desktop Gamer
+        assertTrue(checkRelevance("Memória RAM 16G DDR4 3200MHz Desktop Gamer", "memoria ram 16gb"))
+
+        // memoria ram 16gb | Kit Memória RAM 2x8GB DDR4 3200MHz Dissipador
+        assertTrue(checkRelevance("Kit Memória RAM 2x8GB DDR4 3200MHz Dissipador", "memoria ram 16gb"))
+
+        // rtx 4060 | Placa de Vídeo RTX 4060 8GB GDDR6 Gaming OC
+        assertTrue(checkRelevance("Placa de Vídeo RTX 4060 8GB GDDR6 Gaming OC", "rtx 4060"))
+
+        // rtx 3060 | Placa Gráfica Gaming RTX 3060 12GB Ventoinha Dupla
+        assertTrue(checkRelevance("Placa Gráfica Gaming RTX 3060 12GB Ventoinha Dupla", "rtx 3060"))
+    }
+
+    @Test
+    fun testCenariosManterObrigatorios() {
+        // ACEITAR: mouse gamer | 2024 Novo Mouse Sem Fio Bluetooth 2.4G Recarregável Silencioso Ergonômico Gamer Para Computador Laptop PC
+        assertTrue(checkRelevance("2024 Novo Mouse Sem Fio Bluetooth 2.4G Recarregável Silencioso Ergonômico Gamer Para Computador Laptop PC", "mouse gamer"))
+
+        // ACEITAR: teclado mecanico | Teclado Mecânico Sem Fio 75% Hot Swap RGB Gasket Bluetooth 5.0 2.4G
+        assertTrue(checkRelevance("Teclado Mecânico Sem Fio 75% Hot Swap RGB Gasket Bluetooth 5.0 2.4G", "teclado mecanico"))
+
+        // ACEITAR: fone bluetooth | TWS Fones De Ouvido Sem Fio Bluetooth 5.3 Redução de Ruído HiFi Esportes à prova d água
+        assertTrue(checkRelevance("TWS Fones De Ouvido Sem Fio Bluetooth 5.3 Redução de Ruído HiFi Esportes à prova d água", "fone bluetooth"))
+
+        // ACEITAR: smartwatch | Série 9 Smart Watch Homens Mulheres Bluetooth Chamada Fitness Tracker NFC
+        assertTrue(checkRelevance("Série 9 Smart Watch Homens Mulheres Bluetooth Chamada Fitness Tracker NFC", "smartwatch"))
+
+        // REJEITAR: smart tv | TV Box 4K Android 13 Conversor Smart Wifi
+        assertFalse(checkRelevance("TV Box 4K Android 13 Conversor Smart Wifi", "smart tv", price = 120.0))
+
+        // REJEITAR: processador intel core i5 12400 | Processador Intel Core i3 10100 LGA1200
+        assertFalse(checkRelevance("Processador Intel Core i3 10100 LGA1200", "processador intel core i5 12400"))
+
+        // REJEITAR: airpods pro 2 | Apple AirPods 3 com estojo de carregamento
+        assertFalse(checkRelevance("Apple AirPods 3 com estojo de carregamento", "airpods pro 2"))
+
+        // REJEITAR: monitor gamer 144hz | Monitor 24 polegadas 75Hz Full HD escritório
+        assertFalse(checkRelevance("Monitor 24 polegadas 75Hz Full HD escritório", "monitor gamer 144hz"))
+    }
 }

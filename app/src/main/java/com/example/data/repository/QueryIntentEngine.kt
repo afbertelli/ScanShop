@@ -52,26 +52,37 @@ object QueryIntentEngine {
     )
 
     val SYNONYM_GROUPS: List<Set<String>> = listOf(
-        setOf("gamer", "gaming", "jogo", "jogos", "game"),
-        setOf("sem fio", "sem-fio", "semfio", "wireless", "bluetooth", "fio"),
-        setOf("mecanico", "mecanica", "mechanical"),
+        setOf("gamer", "gaming", "jogo", "jogos", "game", "games"),
+        setOf("sem fio", "sem-fio", "semfio", "wireless", "bluetooth", "2.4g"),
+        setOf("mecanico", "mecanica", "mecanicos", "mechanical"),
         setOf("fone", "fones", "headset", "headphone", "earbuds", "earphones", "tws", "ouvido", "auricular"),
         setOf("mouse", "mouses", "rato", "mice"),
         setOf("teclado", "teclados", "keyboard"),
         setOf("tv", "smart tv", "smarttv", "smartv", "televisao", "televisor", "television", "smart"),
         setOf("celular", "smartphone", "telefone", "phone"),
-        setOf("relogio", "smartwatch", "smart watch", "smartband", "inteligente", "watch"),
+        setOf("smartwatch", "smart watch", "smartband", "smart band", "relogio inteligente"),
         setOf("placa mae", "placa-mae", "motherboard", "mainboard", "mobo", "mae", "placa"),
         setOf("placa de video", "placa grafica", "gpu", "graphics card", "video card", "video"),
         setOf("cadeira", "poltrona", "assento")
     )
 
     fun tokenSatisfied(token: String, text: String): Boolean {
-        if (text.contains(token)) return true
         val lowerToken = token.lowercase(Locale.ROOT)
+        val lowerText = text.lowercase(Locale.ROOT)
+
+        val tokenRegex = "\\b${Regex.escape(lowerToken)}\\b".toRegex()
+        if (tokenRegex.containsMatchIn(lowerText) || (lowerToken.contains(" ") && lowerText.contains(lowerToken))) {
+            return true
+        }
+
         for (group in SYNONYM_GROUPS) {
             if (group.any { it.equals(lowerToken, ignoreCase = true) }) {
-                if (group.any { text.contains(it) }) return true
+                if (group.any { syn ->
+                    val synRegex = "\\b${Regex.escape(syn)}\\b".toRegex()
+                    synRegex.containsMatchIn(lowerText) || (syn.contains(" ") && lowerText.contains(syn))
+                }) {
+                    return true
+                }
             }
         }
         return false
@@ -171,7 +182,7 @@ object QueryIntentEngine {
         ),
         CategoryDef(
             key = "memoria ram",
-            synonyms = listOf("memoria ram", "memória ram", "memoriaram", "ram ddr4", "ram ddr5", "ram ddr3", "memoria ddr4", "memoria ddr5"),
+            synonyms = listOf("memoria ram", "memória ram", "memoriaram", "memoria", "memória", "ram", "ram ddr4", "ram ddr5", "ram ddr3", "memoria ddr4", "memoria ddr5"),
             isTechDevice = true,
             minPriceGuard = 35.0,
             accessoryFilter = listOf(
@@ -185,7 +196,8 @@ object QueryIntentEngine {
             isTechDevice = true,
             minPriceGuard = 45.0,
             accessoryFilter = listOf(
-                "dissipador m.2", "dissipador ssd", "case para ssd", "case nvme", "gaveta para hd",
+                "caixa externa", "enclosure", "gabinete externo", "case externo", "gaveta", "gaveta para hd",
+                "dissipador m.2", "dissipador ssd", "case para ssd", "case nvme", "case m.2", "case ssd",
                 "cabo sata", "adaptador pcie m.2", "parafuso m.2", "enclosure nvme"
             ),
             requiredIndicators = listOf("ssd", "nvme", "disco solido", "m.2", "sata iii", "pcie")
@@ -232,12 +244,13 @@ object QueryIntentEngine {
             isTechDevice = true,
             minPriceGuard = 280.0,
             accessoryFilter = listOf(
+                "tv box", "tv stick", "fire stick", "fire tv", "chromecast", "conversor smart",
                 "controle remoto", "controle de tv", "suporte para tv", "suporte de tv", "suporte articulado",
                 "cabo hdmi", "placa principal tv", "placa fonte tv", "placa t-con", "barra de led", "barras de led",
                 "fita de led tv", "capa para tv", "pelicula para tv", "pe de tv", "pes de tv", "base para tv",
                 "adaptador wireless tv", "conversor digital", "antena digital", "antena tv", "teclado para tv"
             ),
-            requiredIndicators = listOf("smart tv", "smarttv", "smartv", "televisao", "televisor", "tv", "monitor smart", "smart monitor", "tv box", "tv stick", "fire stick", "chromecast", "television")
+            requiredIndicators = listOf("smart tv", "smarttv", "smartv", "televisao", "televisor", "tv", "monitor smart", "smart monitor", "television")
         ),
         CategoryDef(
             key = "monitor",
@@ -260,7 +273,7 @@ object QueryIntentEngine {
                 "pulseira", "pulseiras", "pelicula", "peliculas", "case para smartwatch", "capinha para smartwatch",
                 "carregador para smartwatch", "cabo carregador relogio", "bezel", "aro protetor"
             ),
-            requiredIndicators = listOf("smartwatch", "relogio", "smart watch", "band", "watch", "smart band")
+            requiredIndicators = listOf("smartwatch", "smart watch", "smartband", "smart band", "relogio inteligente")
         ),
         CategoryDef(
             key = "celular",
@@ -314,12 +327,12 @@ object QueryIntentEngine {
             requiredIndicators = listOf("teclado", "keyboard")
         ),
         CategoryDef(
-            key = "cadeira gamer",
-            synonyms = listOf("cadeira gamer", "cadeira de escritorio", "cadeira ergonomica", "poltrona gamer"),
+            key = "cadeira",
+            synonyms = listOf("cadeira", "cadeiras", "poltrona"),
             isTechDevice = false,
-            minPriceGuard = 150.0,
+            minPriceGuard = 120.0,
             accessoryFilter = listOf("almofada", "capa para cadeira", "rodinha", "rodizio", "braco avulso", "suporte de copo", "pistao"),
-            requiredIndicators = listOf("cadeira", "poltrona", "assento")
+            requiredIndicators = listOf("cadeira", "poltrona")
         ),
         CategoryDef(
             key = "caixa de som",
@@ -387,10 +400,11 @@ object QueryIntentEngine {
         ),
         CategoryDef(
             key = "notebook",
-            synonyms = listOf("notebook", "laptop"),
+            synonyms = listOf("notebook", "laptop", "ultrabook", "macbook"),
             isTechDevice = true,
             minPriceGuard = 400.0,
-            accessoryFilter = listOf("capa para notebook", "suporte para notebook", "fonte notebook", "carregador notebook", "adesivo")
+            accessoryFilter = listOf("capa para notebook", "suporte para notebook", "fonte notebook", "carregador notebook", "adesivo"),
+            requiredIndicators = listOf("notebook", "laptop", "ultrabook", "macbook")
         )
     )
 
