@@ -20,16 +20,14 @@ class RelevanceGateTest {
     private fun checkRelevance(
         title: String,
         query: String,
-        price: Double = 0.0,
-        auditor: com.example.data.repository.GeminiGrayZoneAuditor? = null
+        price: Double = 0.0
     ): Boolean {
         val intent = QueryIntentEngine.parseQueryIntent(query)
         val result = RelevanceGate.evaluate(
             title = title,
             price = price,
             query = query,
-            intent = intent,
-            auditor = auditor
+            intent = intent
         )
         return result.isApproved
     }
@@ -261,9 +259,10 @@ class RelevanceGateTest {
         assertFalse(checkRelevance("Óculos de Grau Armação Acetato", "oculos de sol polarizado"))
 
         // 7. Furadeira bateria 21v
-        assertTrue(checkRelevance("Furadeira Parafusadeira Sem Fio 21V 2 Baterias", "furadeira bateria 21v", auditor = fakeGeminiAuditor))
-        assertFalse(checkRelevance("Broca para Furadeira Kit 21 Peças", "furadeira bateria 21v", auditor = fakeGeminiAuditor))
-        assertFalse(checkRelevance("Bateria 21V para Furadeira Makita", "furadeira bateria 21v", auditor = fakeGeminiAuditor))
+        assertTrue(checkRelevance("Furadeira Parafusadeira Sem Fio 21V 2 Baterias", "furadeira bateria 21v"))
+        assertFalse(checkRelevance("Broca para Furadeira Kit 21 Peças", "furadeira bateria 21v"))
+        val furadeiraIntent = QueryIntentEngine.parseQueryIntent("furadeira bateria 21v")
+        assertTrue("Bateria avulsa deve ir para zona cinzenta do Gemini", RelevanceGate.isGrayZone("Bateria 21V para Furadeira Makita", "furadeira bateria 21v", furadeiraIntent))
 
         // 8. Brinquedo carrinho controle remoto
         assertTrue(checkRelevance("Carrinho de Controle Remoto 4x4 Off Road Brinquedo", "brinquedo carrinho controle remoto"))

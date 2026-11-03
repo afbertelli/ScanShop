@@ -6,15 +6,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Bateria de regressão do RelevanceGate com 208 títulos no estilo AliExpress
- * (tecnologia e outras áreas: roupa, casa, ferramenta, pet, cozinha etc.).
+ * Bateria de regressão do RelevanceGate (filtro LOCAL, sem Gemini).
  *
- * Cada caso diz se o título DEVE ser aceito ou rejeitado para a busca. Se algum falhar, o teste mostra
- * todos os casos que divergiram, com o motivo da rejeição, para facilitar o ajuste da regra.
+ *  - [casos]: 271 títulos no estilo AliExpress de áreas variadas (tecnologia, roupa, casa, pet, bebê, camping...).
+ *  - [casosReais]: 76 títulos REAIS do AliExpress/Shopee em português, coletados de ofertas
+ *    (mouse gamer, smartwatch, fone bluetooth, tênis de corrida, placa-mãe X99 e acessórios que aparecem
+ *    misturados: capas, películas, pulseiras, mouse pad, fonte, peças).
  *
- * Limite conhecido (fora desta bateria): busca "furadeira bateria 21v" ainda aceita
- * "Bateria 21V para Furadeira Makita", porque a palavra "bateria" também está na busca.
- * Esse caso só é resolvido pela conferência em lote com o Gemini.
+ * Cada caso diz se o título DEVE ser aceito ou rejeitado para a busca. Se algum falhar, o teste lista
+ * todos os casos divergentes com o motivo da rejeição.
+ *
+ * Os 3 casos que o filtro local não decide sozinho ficam em [casosParaOGemini]: devem cair na zona cinzenta.
  */
 class RelevanceGateCasosTest {
 
@@ -228,31 +230,194 @@ class RelevanceGateCasosTest {
         Caso("tv 32 polegadas", "Smart TV 32 Polegadas HD Wifi", 900.0, true),
         Caso("tv 32 polegadas", "Suporte para TV 32 a 55 Polegadas", 40.0, false),
         Caso("som automotivo", "Som Automotivo Bluetooth MP3 2 Din Rádio Carro", 150.0, true),
-        Caso("som automotivo", "Moldura para Som Automotivo 2 Din", 30.0, false)
+        Caso("som automotivo", "Moldura para Som Automotivo 2 Din", 30.0, false),
+        Caso("tenis nike air max", "Tênis Nike Air Max 90 Masculino Original", 120.0, true),
+        Caso("tenis nike air max", "Tênis Adidas Ultraboost Masculino", 150.0, false),
+        Caso("tenis nike air max", "Cadarço para Tênis Nike Air Max", 10.0, false),
+        Caso("fone xiaomi redmi buds", "Fone Bluetooth Xiaomi Redmi Buds 4 Lite TWS", 90.0, true),
+        Caso("fone xiaomi redmi buds", "Estojo de Silicone para Xiaomi Redmi Buds 4", 10.0, false),
+        Caso("smartwatch amazfit", "Smartwatch Amazfit Bip 5 GPS Chamadas Bluetooth", 300.0, true),
+        Caso("smartwatch amazfit", "Pulseira de Nylon para Amazfit Bip", 15.0, false),
+        Caso("kit pincel maquiagem", "Kit de Pincéis de Maquiagem 12 Peças Profissional", 30.0, true),
+        Caso("kit pincel maquiagem", "Paleta de Sombras 18 Cores", 25.0, false),
+        Caso("esmalte gel", "Esmalte em Gel UV LED 15ml Cor Nude", 12.0, true),
+        Caso("esmalte gel", "Cabine UV para Unhas de Gel 48W", 60.0, false),
+        Caso("secador de cabelo", "Secador de Cabelo Profissional 2000W Íons Difusor", 90.0, true),
+        Caso("secador de cabelo", "Difusor para Secador de Cabelo", 20.0, false),
+        Caso("aspirador portatil carro", "Aspirador de Pó Portátil para Carro Sem Fio 12V", 60.0, true),
+        Caso("aspirador portatil carro", "Capa para Banco de Carro", 40.0, false),
+        Caso("camera re carro", "Câmera de Ré para Carro Visão Noturna Impermeável", 50.0, true),
+        Caso("camera re carro", "Suporte para Câmera de Ré", 15.0, false),
+        Caso("tapete automotivo", "Tapete Automotivo Universal 5 Peças Borracha", 90.0, true),
+        Caso("coleira gps pet", "Coleira GPS para Cães e Gatos Rastreador Impermeável", 70.0, true),
+        Caso("coleira gps pet", "Rastreador GPS para Carro Veicular", 60.0, false),
+        Caso("comedouro automatico", "Comedouro Automático para Gatos e Cães 4L", 120.0, true),
+        Caso("comedouro automatico", "Sachê de Ração para Gatos", 8.0, false),
+        Caso("mamadeira", "Mamadeira Anticólica 240ml Silicone Bebê", 30.0, true),
+        Caso("mamadeira", "Bico para Mamadeira Silicone 3 Peças", 12.0, false),
+        Caso("carrinho de bebe", "Carrinho de Bebê Dobrável 3 em 1 Reversível", 600.0, true),
+        Caso("carrinho de bebe", "Capa de Chuva para Carrinho de Bebê", 30.0, false),
+        Caso("bicicleta aro 29", "Bicicleta Mountain Bike Aro 29 21 Velocidades", 1200.0, true),
+        Caso("capacete moto", "Capacete Moto Fechado Viseira Solar Esportivo", 150.0, true),
+        Caso("capacete moto", "Viseira para Capacete de Moto", 40.0, false),
+        Caso("caneta esferografica", "Caneta Esferográfica Azul 50 Unidades", 25.0, true),
+        Caso("caneta esferografica", "Refil para Caneta Esferográfica", 10.0, false),
+        Caso("caderno", "Caderno Universitário 10 Matérias Capa Dura", 30.0, true),
+        Caso("caderno", "Capa para Caderno A5", 10.0, false),
+        Caso("mesa dobravel", "Mesa Dobrável Portátil Alumínio Camping", 100.0, true),
+        Caso("mesa dobravel", "Toalha para Mesa Dobrável", 20.0, false),
+        Caso("barraca camping", "Barraca de Camping 4 Pessoas Impermeável", 250.0, true),
+        Caso("barraca camping", "Estacas para Barraca de Camping", 20.0, false),
+        Caso("rede de dormir", "Rede de Dormir Casal Algodão Com Varanda", 90.0, true),
+        Caso("rede de dormir", "Suporte para Rede de Dormir", 40.0, false),
+        Caso("cortador de grama", "Cortador de Grama Elétrico Portátil Sem Fio", 300.0, true),
+        Caso("cortador de grama", "Lâmina de Reposição para Cortador de Grama", 30.0, false),
+        Caso("mangueira jardim 15 metros", "Mangueira de Jardim Retrátil 15 Metros Com Esguicho", 90.0, true),
+        Caso("mangueira jardim 15 metros", "Mangueira de Jardim 5 Metros", 40.0, false),
+        Caso("lanterna led", "Lanterna LED Recarregável USB Zoom Potente", 35.0, true),
+        Caso("lanterna led", "Suporte para Lanterna LED Bicicleta", 15.0, false),
+        Caso("controle remoto universal tv", "Controle Remoto Universal para TV Smart LCD LED", 20.0, true),
+        Caso("controle remoto universal tv", "Smart TV 43 Polegadas 4K", 1500.0, false),
+        Caso("adaptador tomada", "Adaptador de Tomada Padrão Brasileiro 3 Pinos", 10.0, true),
+        Caso("adaptador tomada", "Tomada Inteligente Wifi 10A", 40.0, false),
+        Caso("tablet samsung", "Tablet Samsung Galaxy Tab A9 64GB Wifi", 900.0, true),
+        Caso("tablet samsung", "Capa para Tablet Samsung Galaxy Tab A9", 30.0, false),
+        Caso("relogio casio", "Relógio Casio Masculino Digital Vintage", 200.0, true),
+        Caso("relogio casio", "Pulseira para Relógio Casio", 25.0, false),
+        Caso("oculos de natacao", "Óculos de Natação Antiembaçante UV Adulto", 40.0, true),
+        Caso("oculos de natacao", "Touca para Natação Silicone", 15.0, false),
+        Caso("impressora 3d", "Impressora 3D FDM Creality Ender 3 V2", 1500.0, true),
+        Caso("impressora 3d", "Filamento PLA para Impressora 3D 1kg", 90.0, false),
+        Caso("headset", "Headset Gamer USB com Microfone", 80.0, true),
+        Caso("mouse", "Mouse Óptico Sem Fio para Computador Notebook", 25.0, true),
+        Caso("teclado", "Teclado Bluetooth para Tablet Celular Universal", 60.0, true),
+        Caso("fone de ouvido", "Fone de Ouvido Intra Auricular para Celular com Microfone", 20.0, true),
+        Caso("carregador portatil", "Carregador Portátil para Celular 10000mAh", 80.0, true),
+        Caso("cadeira dobravel", "Cadeira Dobrável para Camping Pesca Portátil", 70.0, true),
     )
 
-    @Test
-    fun todosOsCasosDevemSeguirOEsperado() {
-        val divergencias = mutableListOf<String>()
-        for (caso in casos) {
+    private val casosReais = listOf(
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio Dragonfly R1 SE Sensor PAW3395SE Wireless", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer sem Fio Delux M800mini Paw3311 46g 1KHz 26000 DPI", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio Logitech G502 X LIGHTSPEED com Switch LIGHTFORCE 13 Botões Programáveis Sensor HERO 25K Compatíve", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio Marvo Z FIT PRO G1W GY Sensor Pixart PMW3370", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio Leve Attack Shark R1 X11 18K DPI PAW3311 Tri-Modo Bluetooth 24GHz Com Fio", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio RGB Attack Shark X11 Tri-Mode Bluetooth 24G Com Fio PAW3311 Base De Carregamento", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio ATK Phantom Ultimate de Fibra de Carbono Composta, Leve, Dual 8K Esport, com Sensor PAW3955 Master NORDIC 54LM20", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio ATK Blazing Sky F1 V2 Ultimate 8000Hz 38g Ultraleve PAW3950 Ultra Dual-Mode 2.4G/Com Fio Ergonômico", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Gamer Sem Fio Ausdom G06 PAW3955 GT 60K DPI Dual 8K Nordic 54L15 Tri-Mode TTC Qinglong Switch 300mAh", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse sem fio rgb recarregável usb 2.4ghz bluetooth mouse sem fio computador mause led retroiluminado ergonômico mouse para jogos para laptops", 100.0, true),
+        Caso("mouse gamer sem fio", "Mouse Pad Hyperx Pulsifire HMPM1-XL, Extra Grande 900x420mm", 100.0, false),
+        Caso("mouse gamer sem fio", "Fonte Gamemax GS600, 600W, 80 Plus White, PFC Ativo, Com Cabo", 100.0, false),
+        Caso("mouse gamer sem fio", "Rato mudo bluetooth com tela sem fio carregável dpi ajustável personalizado inclinação inferior ergonômico mouse de", 100.0, false),
+        Caso("smartwatch", "IOWODO Relógio Smartwatch Unissex 1.91\" com Chamadas Bluetooth - Lanterna LED, 2 Pulseiras, 100+ Modos Esportivos, IP68 - iPhone/Android (Prata)", 100.0, true),
+        Caso("smartwatch", "Smartwatch Lige com touchcreen, modo esportivo, impermeável, compatível com Android e iOS", 100.0, true),
+        Caso("smartwatch", "Smartwatch Zeblaze Stratos 2 com GPS, display AMOLED, monitor de saúde", 100.0, true),
+        Caso("smartwatch", "Relógio Inteligente de Alta Qualidade com Monitor de Frequência Cardíaca para Fitness e Vida Diária", 100.0, true),
+        Caso("smartwatch", "Relógio Inteligente OEM Amoled 1.43'' com Fones de Ouvido Sem Fio BT 2 em 1, Monitor de Fitness, Frequência Cardíaca, Sono, X20, com Logotipo Personalizado", 100.0, true),
+        Caso("smartwatch", "Relógio Eletrônico Inteligente Tamagotchi Big Mouth Jimami, Relógio Eletrônico para Estudantes, Presente de Natal e Aniversário", 100.0, false),
+        Caso("fone bluetooth", "Novo fone de ouvido sem fio bluetooth tws com microfone estéreo esportes fone de ouvido toque longa espera", 100.0, true),
+        Caso("fone bluetooth", "Fones de Ouvido Sem Fio XGSHOW J18 TWS Bluetooth, Fones de Ouvido Esportivos HiFI Estéreo à Prova d'Água com Microfone", 100.0, true),
+        Caso("fone bluetooth", "Fones de ouvido TWS para jogos HTC NE94 com microfone, modo duplo para jogos e música, baixa latência, tradutor de IA Bluetooth, fones de ouvido sem fio com ajuste confortável", 100.0, true),
+        Caso("fone bluetooth", "Fones de Ouvido Sem Fio ZNP N04 TWS com Tela Sensível ao Toque, Bluetooth, Tradução por IA, Ajuste Confortável e Redução de Ruído", 100.0, true),
+        Caso("fone bluetooth", "Fones de Ouvido Bluetooth Elysia TWS, Semi-In-Ear, Bluetooth 6.0, Fones de Ouvido Sem Fio para Jogos, Presentes para Fãs de Honkai Impact", 100.0, true),
+        Caso("fone bluetooth", "Fones de Ouvido Sem Fio SONY Bluetooth 5.4 Originais com Microfone e Controle por Toque TWS In-Ear", 100.0, true),
+        Caso("fone bluetooth", "Fones de ouvido sem fio bluetooth com microfone fone de ouvido ai inteligente com cancelamento de ruído handsfree talk headset negócios condução", 100.0, true),
+        Caso("fone bluetooth", "Novos Fones de Ouvido Sem Fio Bluetooth 5.3 Air Por 5 Air 3 Pro, Fones de Ouvido Sem Fio HiFI Estéreo, Headset à Prova d'Água, Fones TWS com ANC", 100.0, true),
+        Caso("fone bluetooth", "Fone de Ouvido Bluetooth 2026 WhatPlus RETRO R3 Sem Fio Portátil Clássico Pequeno com Unidade Dinâmica de 40mm", 100.0, true),
+        Caso("fone bluetooth", "Fones de Ouvido Sem Fio com Estojo de Carregamento, Bluetooth 5.0, 36 Horas de Reprodução, IPX5, Graves Profundos", 100.0, true),
+        Caso("fone bluetooth", "H'MASTON Fone de Ouvido Sem Fio Esportivo Fone BLuetooth 5.3 Tws Cancelamento de Ruído Com Microfone e Led Display Comp", 100.0, true),
+        Caso("fone bluetooth", "Fone de Ouvido Bluetooth 5.1 TWS Sem Fio com Display LED, Som Hi-Fi Estéreo, Cancelamento de Ruído, Controle Touch Inteligente, Microfone HD e Estojo de Recarga para Android e iOS", 100.0, true),
+        Caso("fone bluetooth", "A6S Fones De Ouvido TWS Sem Fio Bluetooth Fone Com Cancelamento De Ruído Esportes Jogos Escritório Microfone", 100.0, true),
+        Caso("fone bluetooth", "Realfit F2 TWS Fone De Ouvido Sem Fio Bluetooth Mini Fones De Alta Qualidade Com Bateria De Longa Duração", 100.0, true),
+        Caso("fone bluetooth", "Vitog F9 TWS Fones De Ouvido Sem Fio Bluetooth Display LED Fone De Alta Qualidade Com Microfone", 100.0, true),
+        Caso("fone bluetooth", "Fone de Ouvido Bluetooth TWS Sem Fio Cancelamento de Ruído", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de Corrida Masculino Profissional Respirável", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de Corrida 361 Degrees Fengye 5.0 Leve Absorve Choque – Masculino", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de Corrida Masculino Anta C202 G9 2 de Tecido Cano Baixo Vermelho Cinza Amarelo 112545573-3", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de corrida para homens especializados em maratona respiráveis antiderrapantes atléticos para atividades ao", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis Masculino Skechers Fluid Motion Original Esportivo Treino Corrida Academia", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de Corrida Masculino com Placa de Carbono para Maratona Esportivo Respirável Leve Confortável Antiderrapan", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis de Corrida Masculino de Carbono para Maratonas", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis De Corrida Masculino Supernova Glide Adidas", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis Esportivo Masculino Estiloso Confortável Resistente Treino Academia Corrida Esportivo Lançamento", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis De Corrida Asics Dynablast 5 Masculino - 41 e 42", 100.0, true),
+        Caso("tenis corrida masculino", "Tênis Academia Masculino Amortecimento Alto Flexível Antiderrapante Top", 100.0, false),
+        Caso("tenis corrida masculino", "Meias Esportivas Masculinas: Meias Antiderrapantes para Ciclismo, Basquete, Corrida, Caminhada e Tênis no Verão", 100.0, false),
+        Caso("tenis corrida masculino", "Shorts masculinos de corrida secagem rápida seda gelada", 100.0, false),
+        Caso("tenis corrida masculino", "Conjunto de roupas casuais masculinas esportes colete", 100.0, false),
+        Caso("smartwatch", "Bolsa para Pulseira de Relógio para Apple Watch, Estojo de Viagem para Pulseiras de Smartwatch, Bolsa de Armazenamento para Relógios/Joias", 100.0, false),
+        Caso("smartwatch", "Máquina de Corte de Películas WJW Smart Touch-Screen para Celulares, Câmeras e Smartwatches - Protetores de Tela de Hidrogel TPU", 100.0, false),
+        Caso("smartwatch", "Pulseira De Silicone Para Galaxy Watch 7 6 5 4 40mm 44mm Fe", 100.0, false),
+        Caso("smartwatch", "Pulseira Silicone Para Samsung Galaxy Watch 3 45mm (22mm) Galaxy Watch 46MM - Gear S3 Frontier Classic - Amazfit GTR 47MM - GTR 2 - WATCH GT 2 46MM Cor Preto", 100.0, false),
+        Caso("smartwatch", "Kit Capa Bezel + Pulseira Para G-shock Preto Ga-100 Borracha Preto", 100.0, false),
+        Caso("smartwatch", "Case Capa Capinha Bumper Com Película Protetora Proteção Protege Anti Arranhões E Impactos Para Xiaomi Smart Mi Band 10 Cor Transparente", 100.0, false),
+        Caso("smartwatch", "6 pçs/lote mão alça de pulso cordão náilon pulseira correias para caso do telefone celular titular câmera chave gopro pulseira cordão", 100.0, false),
+        Caso("smartwatch", "Samsung Galaxy Watch8 Smartwatch 40mm LTE Galaxy AI - Grafite", 100.0, true),
+        Caso("smartwatch", "Smartwatch Colmi P8 Plus", 100.0, true),
+        Caso("galaxy watch 7", "Pulseira De Silicone Para Galaxy Watch 7 6 5 4 40mm 44mm Fe", 100.0, false),
+        Caso("celular samsung galaxy z fold", "Capa de celular com suporte e cordão, com desenho animado fofo do personagem japonês Chiikawa Usagi Hachiware, para Samsung Galaxy Z Fold 8 7 6 5", 100.0, false),
+        Caso("galaxy s23", "Película Hprime Para Galaxy S23/s23+/s23 Ultra/s24 Ultra", 100.0, false),
+        Caso("google pixel 10", "Capa de Telefone Magnética Resistente a Quedas com Suporte para Magsafe para Google Pixel 10 9 10 Pro XL 9 Pro XL", 100.0, false),
+        Caso("xiaomi redmi note 11s", "Capa carregadora de bateria 10000mah xiaomi redmi note 11s", 100.0, false),
+        Caso("steam deck", "Película Hidrogel Para Steam Deck Lcd/ Oled Tpu Nano Gamer", 100.0, false),
+        Caso("carregador celular", "1 conjunto de aço inoxidável 304 v banda prendedor kit para tubo escape turbo carregador 2 Polegada peças da motocicleta", 100.0, false),
+        Caso("celular", "6 pçs/lote mão alça de pulso cordão náilon pulseira correias para caso do telefone celular titular câmera chave gopro pulseira cordão", 100.0, false),
+        Caso("celular", "Máquina de Corte de Películas WJW Smart Touch-Screen para Celulares, Câmeras e Smartwatches - Protetores de Tela de Hidrogel TPU", 100.0, false),
+        Caso("placa mae x99", "Tampa de silicone para porta OBD de carro, à prova d'água, tampas anti-poeira e anti-entupimento", 100.0, false),
+        Caso("placa mae x99", "Rack de chassi de estúdio aberto, suporte de placa principal ATX X79 X99 espesso", 100.0, false),
+        Caso("placa mae x99", "Placa-Mãe X99 DDR4 LGA2011 X99 P4 H55 Chipset Gigabit Ethernet X99 Para Jogos Com SATA", 100.0, true),
+        Caso("placa mae x99", "🎀Placa-Mãe X99 X99 P3 LGA2011 Q57 Chipset Gigabit Ethernet Suporta 4x RAM DDR3", 100.0, true),
+        Caso("placa mae x99", "Placa Mãe X99 Gaming M.2 NVME LGA 2011-3 Suporta Xeon E5 V3 V4 DDR4", 100.0, true),
+        Caso("placa mae x99", "Suporte de placa mãe ATX X99 estrutura aberta bancada de testes", 100.0, false),
+        Caso("placa mae x99", "Cabo SATA 6Gbps para placa mãe X99", 100.0, false),
+        Caso("placa mae x99", "Dissipador de calor para chipset X99 placa mãe", 100.0, false),
+        Caso("placa mae x99", "Kit X99 Placa Mãe + Xeon E5 2670 V3 + 32GB DDR4 RECC", 100.0, true),
+    )
+
+    /** Aceitos pelo filtro local, mas só o Gemini consegue reprovar: precisam estar na zona cinzenta. */
+    private val casosParaOGemini = listOf(
+        "furadeira bateria 21v" to "Bateria 21V para Furadeira Makita",
+        "tapete automotivo" to "Limpador de Tapete Automotivo Spray",
+        "bicicleta aro 29" to "Pneu Bicicleta Aro 29",
+    )
+
+    private fun divergencias(lista: List<Caso>): List<String> {
+        val resultado = mutableListOf<String>()
+        for (caso in lista) {
             // Mesmo caminho do app: limpa a busca, interpreta a intenção e avalia o título.
             val busca = QueryIntentEngine.cleanSearchQuery(caso.busca)
             val intent = QueryIntentEngine.parseQueryIntent(busca)
-            val resultado = RelevanceGate.evaluate(
-                title = caso.titulo,
-                price = caso.preco,
-                query = busca,
-                intent = intent
-            )
-            if (resultado.isApproved != caso.aceitar) {
+            val r = RelevanceGate.evaluateLocal(title = caso.titulo, price = caso.preco, query = busca, intent = intent)
+            if (r.isApproved != caso.aceitar) {
                 val esperado = if (caso.aceitar) "ACEITAR" else "REJEITAR"
-                val obtido = if (resultado.isApproved) "aceitou" else "rejeitou (${resultado.rejectionReason})"
-                divergencias.add("[$esperado] busca='${caso.busca}' título='${caso.titulo}' -> $obtido")
+                val obtido = if (r.isApproved) "aceitou" else "rejeitou (${r.rejectionReason})"
+                resultado.add("[$esperado] busca='${caso.busca}' título='${caso.titulo}' -> $obtido")
             }
         }
-        assertTrue(
-            "${divergencias.size} caso(s) divergente(s):\n" + divergencias.joinToString("\n"),
-            divergencias.isEmpty()
-        )
+        return resultado
+    }
+
+    @Test
+    fun casosSinteticosDevemSeguirOEsperado() {
+        val d = divergencias(casos)
+        assertTrue("${d.size} caso(s) divergente(s):\n" + d.joinToString("\n"), d.isEmpty())
+    }
+
+    @Test
+    fun titulosReaisDevemSeguirOEsperado() {
+        val d = divergencias(casosReais)
+        assertTrue("${d.size} título(s) real(is) divergente(s):\n" + d.joinToString("\n"), d.isEmpty())
+    }
+
+    @Test
+    fun casosDuvidososDevemIrParaAConferenciaComGemini() {
+        val fora = mutableListOf<String>()
+        for ((buscaOriginal, titulo) in casosParaOGemini) {
+            val busca = QueryIntentEngine.cleanSearchQuery(buscaOriginal)
+            val intent = QueryIntentEngine.parseQueryIntent(busca)
+            if (!RelevanceGate.isGrayZone(titulo, busca, intent)) fora.add("busca='$buscaOriginal' título='$titulo'")
+        }
+        assertTrue("Deveriam estar na zona cinzenta (Gemini):\n" + fora.joinToString("\n"), fora.isEmpty())
     }
 }

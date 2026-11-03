@@ -5,6 +5,9 @@ import com.example.BuildConfig
 import com.example.data.model.ComparisonResult
 import com.example.data.model.Product
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import com.example.data.repository.QueryIntentEngine
 import com.example.data.repository.RelevanceGate
@@ -91,6 +94,20 @@ class AiSearchService {
         private const val MODEL_NAME = "gemini-2.5-flash"
         private const val GEMINI_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
+
+        /**
+         * Divide itens em lotes para conferência de zona cinzenta com Gemini.
+         * Limita a [maxItems] (padrão 90) em lotes de [batchSize] (padrão 30).
+         */
+        fun <T> splitIntoAuditBatches(
+            items: List<T>,
+            batchSize: Int = 30,
+            maxItems: Int = 90
+        ): List<List<T>> {
+            if (items.isEmpty() || batchSize <= 0 || maxItems <= 0) return emptyList()
+            val limited = items.take(maxItems)
+            return limited.chunked(batchSize)
+        }
 
         fun getApiKey(): String {
             return try {
@@ -1986,17 +2003,48 @@ class AiSearchService {
         }
 
         val allApprovedProds = (refinedAli + refinedShopee)
-        val grayZoneProds = allApprovedProds.filter { RelevanceGate.isGrayZone(it.title, query, intent) }.take(30)
-        val auditMap: Map<String, Boolean> = if (grayZoneProds.isNotEmpty()) {
-            val auditor = RelevanceGate.grayZoneAuditor ?: com.example.data.repository.RealGeminiGrayZoneAuditor()
-            auditor.auditBatch(query, grayZoneProds.map { it.id to it.title })
+        val grayZoneProds = allApprovedProds.filter { RelevanceGate.isGrayZone(it.title, query, intent) }
+        val batches = splitIntoAuditBatches(grayZoneProds.map { it.id to it.title }, batchSize = 30, maxItems = 90)
+
+        val auditor = RelevanceGate.grayZoneAuditor ?: com.example.data.repository.RealGeminiGrayZoneAuditor()
+        val auditMap: Map<String, Boolean> = if (batches.isNotEmpty()) {
+            coroutineScope {
+                batches.map { batch ->
+                    async {
+                        try {
+                            auditor.auditBatch(query, batch)
+                        } catch (e: Exception) {
+                            emptyMap<String, Boolean>()
+                        }
+                    }
+                }.awaitAll().fold(mutableMapOf<String, Boolean>()) { acc, map ->
+                    acc.putAll(map)
+                    acc
+                }
+            }
         } else {
             emptyMap()
         }
 
+        val auditedCount = auditMap.size
+        val rejectedCount = auditMap.values.count { !it }
+        if (auditedCount > 0) {
+            try {
+                Log.d(TAG, "Gemini GrayZone Audit: $auditedCount itens conferidos, $rejectedCount reprovados")
+            } catch (_: Throwable) {
+                // Em testes unitários JVM
+            }
+        }
+
         val finalAliFiltered = refinedAli.filter { prod ->
             if (RelevanceGate.isGrayZone(prod.title, query, intent)) {
-                auditMap[prod.id] == true
+                val isRejected = auditMap[prod.id] == false
+                if (isRejected) {
+                    filteredAccessories++
+                    false
+                } else {
+                    true
+                }
             } else {
                 true
             }
@@ -2004,7 +2052,13 @@ class AiSearchService {
 
         val finalShopeeFiltered = refinedShopee.filter { prod ->
             if (RelevanceGate.isGrayZone(prod.title, query, intent)) {
-                auditMap[prod.id] == true
+                val isRejected = auditMap[prod.id] == false
+                if (isRejected) {
+                    filteredAccessories++
+                    false
+                } else {
+                    true
+                }
             } else {
                 true
             }
