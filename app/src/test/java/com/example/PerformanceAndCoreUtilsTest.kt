@@ -10,6 +10,9 @@ import com.example.data.network.NetworkClientProvider
 import com.example.data.network.SearchEngineImageHit
 import com.example.data.search.NeuralProductMatcher
 import com.example.data.search.TextNormalizer
+import com.example.ui.util.DeepLinkUtils
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -153,5 +156,43 @@ class PerformanceAndCoreUtilsTest {
         assertNull(
             client.findBestFuzzyPrice(TextNormalizer.normalize("Monitor Gamer 27 Polegadas"), entries)
         )
+    }
+
+    @Test
+    fun `deepLinkUtils normalizes uppercase http scheme across all stores`() {
+        val mlUrl = DeepLinkUtils.formatMercadoLivreAffiliateUrl("HTTP://www.mercadolivre.com.br/produto/p/MLB123")
+        assertTrue(mlUrl.startsWith("https://www.mercadolivre.com.br/"))
+        assertTrue(mlUrl.contains("matt_tool="))
+
+        val aliUrl = DeepLinkUtils.formatAliExpressAffiliateUrl("HTTP://pt.aliexpress.com/item/123.html")
+        assertTrue(aliUrl.startsWith("https://pt.aliexpress.com/"))
+        assertTrue(aliUrl.contains("tracking_id=scanshop"))
+
+        val shopeeUrl = DeepLinkUtils.formatShopeeAffiliateUrl("HTTP://shopee.com.br/produto-i.1.2")
+        assertTrue(shopeeUrl.startsWith("https://shopee.com.br/"))
+        assertTrue(shopeeUrl.contains("utm_source="))
+    }
+
+    @Test
+    fun `priceFormatter is thread safe under concurrent formatting`() {
+        val pool = Executors.newFixedThreadPool(8)
+        try {
+            val tasks = (1..200).map { i ->
+                Callable<Pair<String, String>> {
+                    val value = 100.0 + i * 0.25
+                    val formatted = PriceFormatter.formatBrl(value)
+                    val roundTripped = PriceFormatter.formatBrl(formatted)
+                    formatted to roundTripped
+                }
+            }
+            val futures = pool.invokeAll(tasks)
+            futures.forEach { future ->
+                val (formatted, roundTripped) = future.get()
+                assertTrue("Unexpected format: $formatted", formatted.startsWith("R$ "))
+                assertEquals(formatted, roundTripped)
+            }
+        } finally {
+            pool.shutdownNow()
+        }
     }
 }

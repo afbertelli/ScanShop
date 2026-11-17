@@ -213,15 +213,24 @@ fun ProductMatchCard(
                         overflow = TextOverflow.Ellipsis
                     )
 
-                    if (product.priceText.isNotBlank()) {
-                        Text(
-                            text = product.priceText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = DealGreen,
-                            maxLines = 1
-                        )
+                    val hasCardPrice = product.priceText.isNotBlank()
+                    val missingCardPriceLabel = if (product.store == StoreType.MERCADO_LIVRE) {
+                        "Ver preço no ML"
+                    } else {
+                        "Ver preço"
                     }
+                    Text(
+                        text = if (hasCardPrice) product.priceText else missingCardPriceLabel,
+                        style = if (hasCardPrice) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium,
+                        fontWeight = if (hasCardPrice) FontWeight.ExtraBold else FontWeight.SemiBold,
+                        color = when {
+                            hasCardPrice -> DealGreen
+                            product.store == StoreType.MERCADO_LIVRE -> MercadoLivreBlue
+                            else -> MaterialTheme.colorScheme.primary
+                        },
+                        maxLines = 1,
+                        modifier = Modifier.testTag("product_match_price_${product.id}")
+                    )
 
                     if (product.matchedSpecs.isNotEmpty()) {
                         FlowRow(
@@ -314,10 +323,15 @@ fun ProductMatchCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val openBtnColor = when (product.store) {
+                    StoreType.MERCADO_LIVRE -> MercadoLivreBlue
+                    StoreType.SHOPEE -> ShopeeOrange
+                    StoreType.ALIEXPRESS -> AliExpressRed
+                }
                 Button(
                     onClick = onOpenStore,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = AliExpressRed,
+                        containerColor = openBtnColor,
                         contentColor = Color.White
                     ),
                     shape = RoundedCornerShape(12.dp),

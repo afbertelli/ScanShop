@@ -17,7 +17,7 @@ import com.example.data.model.StoreFetchReport
 import com.example.data.model.StoreType
 import com.example.ui.components.CarouselProductMatchCard
 import com.example.ui.screens.SearchScreen
-import com.example.ui.theme.AliShopTheme
+import com.example.ui.theme.ScanShopTheme
 import com.example.ui.viewmodel.SearchUiState
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -87,7 +87,7 @@ class SearchAndCardUiTest {
         )
 
         composeRule.setContent {
-            AliShopTheme {
+            ScanShopTheme {
                 SearchScreen(
                     state = state,
                     onQueryChanged = {},
@@ -140,7 +140,7 @@ class SearchAndCardUiTest {
         )
 
         composeRule.setContent {
-            AliShopTheme {
+            ScanShopTheme {
                 Column {
                     CarouselProductMatchCard(
                         product = mlBlankPrice,
@@ -172,5 +172,53 @@ class SearchAndCardUiTest {
             0,
             composeRule.onAllNodesWithText("R$ --", useUnmergedTree = true).fetchSemanticsNodes().size
         )
+    }
+
+    @Test
+    fun `productMatchCard renders Ver preco no ML or Ver preco when price is blank`() {
+        val mlBlankPrice = MatchedProduct(
+            id = "fav_ml_no_price",
+            store = StoreType.MERCADO_LIVRE,
+            title = "SSD NVMe 1TB Kingston",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/ssd-nvme/p/MLB999111",
+            affiliateUrl = "https://www.mercadolivre.com.br/ssd-nvme/p/MLB999111",
+            priceText = "",
+            categoryLabel = "",
+            matchedSpecs = emptyList(),
+            assertivenessScore = 0.88f,
+            matchVerdict = MatchVerdict.EXACT_MATCH,
+            matchReason = "Correspondência exata.",
+            featureBreakdown = sampleBreakdown
+        )
+        val aliBlankPrice = mlBlankPrice.copy(
+            id = "fav_ali_no_price",
+            store = StoreType.ALIEXPRESS,
+            productUrl = "https://pt.aliexpress.com/item/123.html",
+            affiliateUrl = "https://pt.aliexpress.com/item/123.html"
+        )
+
+        composeRule.setContent {
+            ScanShopTheme {
+                Column {
+                    com.example.ui.components.ProductMatchCard(
+                        product = mlBlankPrice,
+                        onOpenStore = {},
+                        onShare = {}
+                    )
+                    com.example.ui.components.ProductMatchCard(
+                        product = aliBlankPrice,
+                        onOpenStore = {},
+                        onShare = {}
+                    )
+                }
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("product_match_price_fav_ml_no_price", useUnmergedTree = true)
+            .assertTextEquals("Ver preço no ML")
+        composeRule.onNodeWithTag("product_match_price_fav_ali_no_price", useUnmergedTree = true)
+            .assertTextEquals("Ver preço")
     }
 }

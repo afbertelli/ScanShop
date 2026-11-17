@@ -26,8 +26,8 @@ object DeepLinkUtils {
     fun formatAliExpressAffiliateUrl(url: String): String {
         if (url.isBlank()) return url
         var clean = url.trim()
-        if (clean.startsWith("http://")) {
-            clean = "https://" + clean.removePrefix("http://")
+        if (clean.startsWith("http://", ignoreCase = true)) {
+            clean = "https://" + clean.substring(7)
         }
         val sep = if (clean.contains("?")) "&" else "?"
         return if (!clean.contains("tracking_id=") && !clean.contains("sk=")) {
@@ -40,8 +40,8 @@ object DeepLinkUtils {
     fun formatShopeeAffiliateUrl(url: String): String {
         if (url.isBlank()) return url
         var clean = url.trim()
-        if (clean.startsWith("http://")) {
-            clean = "https://" + clean.removePrefix("http://")
+        if (clean.startsWith("http://", ignoreCase = true)) {
+            clean = "https://" + clean.substring(7)
         }
         val sep = if (clean.contains("?")) "&" else "?"
         return if (!clean.contains("utm_source=")) {
@@ -71,7 +71,7 @@ object DeepLinkUtils {
 
         var handled = false
         try {
-            val targetDeepLink = if (deepLinkUrl.isNotBlank() && !deepLinkUrl.startsWith("http")) {
+            val targetDeepLink = if (deepLinkUrl.isNotBlank() && !deepLinkUrl.startsWith("http", ignoreCase = true)) {
                 deepLinkUrl
             } else {
                 targetAffiliateUrl

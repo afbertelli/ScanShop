@@ -34,6 +34,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -224,6 +225,21 @@ fun FavoritesScreen(
                 }
             }
         } else {
+            val openStoreHandler = remember(context) {
+                { product: MatchedProduct ->
+                    DeepLinkUtils.openAffiliateUrl(
+                        context = context,
+                        store = product.store,
+                        affiliateUrl = product.affiliateUrl,
+                        deepLinkUrl = product.deepLinkUrl
+                    )
+                }
+            }
+            val shareHandler = remember(context) {
+                { product: MatchedProduct ->
+                    shareProduct(context, product)
+                }
+            }
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -235,21 +251,15 @@ fun FavoritesScreen(
                     items = favorites,
                     key = { it.id }
                 ) { product ->
+                    val itemToggle = remember(product.id, onToggleFavorite) { { onToggleFavorite(product) } }
+                    val itemOpen = remember(product.id, openStoreHandler) { { openStoreHandler(product) } }
+                    val itemShare = remember(product.id, shareHandler) { { shareHandler(product) } }
                     ProductMatchCard(
                         product = product,
                         isFavorite = true,
-                        onToggleFavorite = { onToggleFavorite(product) },
-                        onOpenStore = {
-                            DeepLinkUtils.openAffiliateUrl(
-                                context = context,
-                                store = product.store,
-                                affiliateUrl = product.affiliateUrl,
-                                deepLinkUrl = product.deepLinkUrl
-                            )
-                        },
-                        onShare = {
-                            shareProduct(context, product)
-                        }
+                        onToggleFavorite = itemToggle,
+                        onOpenStore = itemOpen,
+                        onShare = itemShare
                     )
                 }
             }

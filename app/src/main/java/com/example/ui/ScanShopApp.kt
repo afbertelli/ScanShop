@@ -40,8 +40,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,7 +63,7 @@ import com.example.ui.screens.SearchScreen
 import com.example.ui.theme.AliExpressRed
 import com.example.ui.theme.DealGreen
 import com.example.ui.theme.ShopeeOrange
-import com.example.ui.viewmodel.AliShopViewModel
+import com.example.ui.viewmodel.ScanShopViewModel
 
 data class BottomNavItem(
     val label: String,
@@ -72,36 +73,38 @@ data class BottomNavItem(
 )
 
 @Composable
-fun AliShopApp(
-    viewModel: AliShopViewModel,
+fun ScanShopApp(
+    viewModel: ScanShopViewModel,
     modifier: Modifier = Modifier
 ) {
-    val selectedTab by viewModel.selectedTab.collectAsState()
-    val searchState by viewModel.searchState.collectAsState()
-    val promoState by viewModel.promoState.collectAsState()
-    val favorites by viewModel.favorites.collectAsState()
-    val favoriteIds by viewModel.favoriteIds.collectAsState()
+    val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
+    val searchState by viewModel.searchState.collectAsStateWithLifecycle()
+    val promoState by viewModel.promoState.collectAsStateWithLifecycle()
+    val favorites by viewModel.favorites.collectAsStateWithLifecycle()
+    val favoriteIds by viewModel.favoriteIds.collectAsStateWithLifecycle()
 
-    val navItems = listOf(
-        BottomNavItem(
-            label = "Busca",
-            selectedIcon = Icons.Filled.Search,
-            unselectedIcon = Icons.Outlined.Search,
-            testTag = "tab_busca"
-        ),
-        BottomNavItem(
-            label = "Promoções",
-            selectedIcon = Icons.Filled.LocalOffer,
-            unselectedIcon = Icons.Outlined.LocalOffer,
-            testTag = "tab_promocoes"
-        ),
-        BottomNavItem(
-            label = "Favoritos",
-            selectedIcon = Icons.Filled.Favorite,
-            unselectedIcon = Icons.Outlined.FavoriteBorder,
-            testTag = "tab_favoritos"
+    val navItems = remember {
+        listOf(
+            BottomNavItem(
+                label = "Busca",
+                selectedIcon = Icons.Filled.Search,
+                unselectedIcon = Icons.Outlined.Search,
+                testTag = "tab_busca"
+            ),
+            BottomNavItem(
+                label = "Promoções",
+                selectedIcon = Icons.Filled.LocalOffer,
+                unselectedIcon = Icons.Outlined.LocalOffer,
+                testTag = "tab_promocoes"
+            ),
+            BottomNavItem(
+                label = "Favoritos",
+                selectedIcon = Icons.Filled.Favorite,
+                unselectedIcon = Icons.Outlined.FavoriteBorder,
+                testTag = "tab_favoritos"
+            )
         )
-    )
+    }
 
     BackHandler(enabled = selectedTab != 0) {
         viewModel.selectTab(0)
@@ -110,7 +113,7 @@ fun AliShopApp(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         topBar = {
-            AliShopTopBar(
+            ScanShopTopBar(
                 isAboutSelected = selectedTab == 3,
                 onOpenAbout = { viewModel.selectTab(3) }
             )
@@ -228,7 +231,7 @@ fun AliShopApp(
 }
 
 @Composable
-fun AliShopTopBar(
+fun ScanShopTopBar(
     isAboutSelected: Boolean = false,
     onOpenAbout: () -> Unit = {},
     modifier: Modifier = Modifier

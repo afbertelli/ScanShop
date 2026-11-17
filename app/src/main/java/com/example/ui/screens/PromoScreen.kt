@@ -60,6 +60,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private val promoTimeFormatterLocal = ThreadLocal.withInitial {
+    SimpleDateFormat("HH:mm", Locale.Builder().setLanguage("pt").setRegion("BR").build())
+}
+
 @Composable
 fun PromoScreen(
     state: PromoUiState,
@@ -79,7 +83,9 @@ fun PromoScreen(
     val updatedLabel = remember(state.sessionResult?.updatedAtMillis) {
         val ts = state.sessionResult?.updatedAtMillis
         if (ts != null && ts > 0L) {
-            "Atualizado às ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))}"
+            val fmt = promoTimeFormatterLocal.get()
+                ?: SimpleDateFormat("HH:mm", Locale.Builder().setLanguage("pt").setRegion("BR").build())
+            "Atualizado às ${fmt.format(Date(ts))}"
         } else {
             "Mais vendidos da semana por loja"
         }

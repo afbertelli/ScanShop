@@ -1,14 +1,14 @@
-# ScanShop — Comparador Nativo Android de Preços (AliExpress vs. Shopee)
+# ScanShop — Comparador Nativo Android de Preços (Mercado Livre, Shopee e AliExpress)
 
-Aplicativo Android nativo construído com **Kotlin**, **Jetpack Compose** e **Room Database**, projetado para comparar preços em tempo real entre **AliExpress** e **Shopee**.
+Aplicativo Android nativo construído com **Kotlin**, **Jetpack Compose** e **Room Database**, projetado para comparar ofertas em tempo real no **Mercado Livre**, **Shopee** e **AliExpress**.
 
 ---
 
 ## 🚀 Funcionalidades Principais
 
-1. **Busca e Comparação em Tempo Real (Lado a Lado & Lista Unificada)**:
-   - Comparação simultânea de ofertas do AliExpress e da Shopee.
-   - Alternância fluida entre modo **Lado a Lado** (colunas sincronizadas) e **Lista Unificada** (ordenada pelo menor preço).
+1. **Busca e Comparação em Tempo Real por Loja**:
+   - Consulta simultânea de ofertas no Mercado Livre, Shopee e AliExpress em carrosséis por loja.
+   - Paginação sob demanda e preenchimento automático em segundo plano para ampliar resultados.
    - Busca por voz integrada com `SpeechRecognizer` (`pt-BR`).
    - Sugestões e histórico de buscas recentes.
 
@@ -23,7 +23,7 @@ Aplicativo Android nativo construído com **Kotlin**, **Jetpack Compose** e **Ro
    - Indicação de cupons ativos e frete grátis.
 
 4. **Monitoramento e Favoritos (Room Database)**:
-   - Armazenamento local com Room Database (`AliShopDatabase`).
+   - Armazenamento local com Room Database (`ScanShopDatabase`).
    - Salve produtos e acompanhe variações e histórico de preços.
 
 5. **Redirecionamento com Deep Links e Links de Afiliados**:

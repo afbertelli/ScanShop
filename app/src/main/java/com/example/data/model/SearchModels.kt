@@ -11,13 +11,16 @@ object PriceFormatter {
         groupingSeparator = '.'
         decimalSeparator = ','
     }
-    private val formatter = DecimalFormat("#,##0.00", brSymbols)
+    private val formatterLocal = ThreadLocal.withInitial {
+        DecimalFormat("#,##0.00", brSymbols)
+    }
     private val nonNumericPriceCharsRegex = Regex("[^0-9.,]")
     private val thousandsGroupedIntRegex = Regex("""^\d{1,3}(\.\d{3})+$""")
 
     fun formatBrl(value: Double): String {
         if (!value.isFinite() || value <= 0.0) return ""
-        return "R$ ${formatter.format(value)}"
+        val fmt = formatterLocal.get() ?: DecimalFormat("#,##0.00", brSymbols)
+        return "R$ ${fmt.format(value)}"
     }
 
     fun formatBrl(raw: String?): String {

@@ -94,23 +94,25 @@ fun SearchScreen(
         }
     }
 
-    val startVoiceSearch = {
-        try {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(
-                    RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-                )
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o produto que procura...")
+    val startVoiceSearch = remember(context, voiceLauncher) {
+        {
+            try {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(
+                        RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                        RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+                    )
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o produto que procura...")
+                }
+                voiceLauncher.launch(intent)
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(
+                    context,
+                    "Reconhecimento de voz não suportado neste aparelho.",
+                    Toast.LENGTH_LONG
+                ).show()
             }
-            voiceLauncher.launch(intent)
-        } catch (_: ActivityNotFoundException) {
-            Toast.makeText(
-                context,
-                "Reconhecimento de voz não suportado neste aparelho.",
-                Toast.LENGTH_LONG
-            ).show()
         }
     }
 

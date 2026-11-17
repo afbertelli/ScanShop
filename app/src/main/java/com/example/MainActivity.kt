@@ -13,26 +13,26 @@ import coil.Coil
 import coil.ImageLoader
 import coil.request.CachePolicy
 import com.example.ai.configureAppCheck
-import com.example.data.local.AliShopDatabase
+import com.example.data.local.ScanShopDatabase
 import com.example.data.network.MercadoLivreClient
 import com.example.data.network.NetworkClientProvider
 import com.example.data.repository.FavoriteRepository
 import com.example.data.search.RealTimeSearchOrchestrator
-import com.example.ui.AliShopApp
-import com.example.ui.theme.AliShopTheme
-import com.example.ui.viewmodel.AliShopViewModel
+import com.example.ui.ScanShopApp
+import com.example.ui.theme.ScanShopTheme
+import com.example.ui.viewmodel.ScanShopViewModel
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: AliShopViewModel by viewModels {
+    private val viewModel: ScanShopViewModel by viewModels {
         object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 val mlClient = MercadoLivreClient(applicationContext)
                 val searchOrchestrator = RealTimeSearchOrchestrator(mercadoLivreClient = mlClient)
-                val database = AliShopDatabase.getInstance(applicationContext)
+                val database = ScanShopDatabase.getInstance(applicationContext)
                 val favoriteRepository = FavoriteRepository(database.favoriteDao())
-                return AliShopViewModel(
+                return ScanShopViewModel(
                     searchOrchestrator = searchOrchestrator,
                     favoriteRepository = favoriteRepository
                 ) as T
@@ -91,8 +91,8 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            AliShopTheme {
-                AliShopApp(viewModel = viewModel)
+            ScanShopTheme {
+                ScanShopApp(viewModel = viewModel)
             }
         }
     }

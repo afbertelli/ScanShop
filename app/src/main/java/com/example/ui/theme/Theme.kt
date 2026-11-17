@@ -26,7 +26,7 @@ private val LightColorScheme = lightColorScheme(
 )
 
 @Composable
-fun AliShopTheme(
+fun ScanShopTheme(
     content: @Composable () -> Unit,
 ) {
     MaterialTheme(

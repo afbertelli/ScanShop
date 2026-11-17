@@ -22,11 +22,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-private const val TAG = "AliShopViewModel"
+private const val TAG = "ScanShopViewModel"
 
 data class SearchUiState(
     val query: String = "",
@@ -47,7 +48,7 @@ data class PromoUiState(
     val storePages: Map<StoreType, Int> = emptyMap()
 )
 
-class AliShopViewModel(
+class ScanShopViewModel(
     private val searchOrchestrator: RealTimeSearchOrchestrator,
     private val favoriteRepository: FavoriteRepository? = null
 ) : ViewModel() {
@@ -76,6 +77,8 @@ class AliShopViewModel(
     private val promoLoadMoreJobs = mutableMapOf<StoreType, Job>()
     private val searchStateMergeMutex = Mutex()
     private val storeOperationMutexes = StoreType.entries.associateWith { Mutex() }
+    private val promoStateMergeMutex = Mutex()
+    private val promoOperationMutexes = StoreType.entries.associateWith { Mutex() }
 
     fun toggleFavorite(product: MatchedProduct) {
         viewModelScope.launch {
@@ -125,21 +128,23 @@ class AliShopViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Weekly promos fetch failed", e)
-                _promoState.value = if (existing != null) {
-                    _promoState.value.copy(stage = PromoPipelineStage.Completed, isRefreshing = false)
-                } else {
-                    PromoUiState(
-                        stage = PromoPipelineStage.Error("Não foi possível carregar os melhores da semana. Toque em Atualizar."),
-                        isRefreshing = false,
-                        sessionResult = null
-                    )
+                _promoState.update { latest ->
+                    if (latest.sessionResult != null) {
+                        latest.copy(stage = PromoPipelineStage.Completed, isRefreshing = false)
+                    } else {
+                        PromoUiState(
+                            stage = PromoPipelineStage.Error("Não foi possível carregar os melhores da semana. Toque em Atualizar."),
+                            isRefreshing = false,
+                            sessionResult = null
+                        )
+                    }
                 }
             }
         }
     }
 
     fun onQueryChanged(newQuery: String) {
-        _searchState.value = _searchState.value.copy(query = newQuery)
+        _searchState.update { it.copy(query = newQuery) }
     }
 
     fun performSearch(queryToSearch: String = _searchState.value.query) {
@@ -155,38 +160,54 @@ class AliShopViewModel(
             return
         }
 
-        _searchState.value = _searchState.value.copy(
-            query = trimmed,
-            lastSubmittedQuery = trimmed,
-            stage = SearchPipelineStage.AnalyzingIntent,
-            sessionResult = null,
-            loadingMoreStores = emptySet(),
-            storeHasMore = emptyMap(),
-            storePages = emptyMap()
-        )
+        _searchState.update {
+            it.copy(
+                query = trimmed,
+                lastSubmittedQuery = trimmed,
+                stage = SearchPipelineStage.AnalyzingIntent,
+                sessionResult = null,
+                loadingMoreStores = emptySet(),
+                storeHasMore = emptyMap(),
+                storePages = emptyMap()
+            )
+        }
 
         activeSearchJob = viewModelScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             try {
                 val result = searchOrchestrator.executeSearch(trimmed) { stage ->
-                    _searchState.value = _searchState.value.copy(stage = stage)
+                    _searchState.update { cur ->
+                        if (cur.lastSubmittedQuery == trimmed) cur.copy(stage = stage) else cur
+                    }
                 }
-                _searchState.value = _searchState.value.copy(
-                    stage = SearchPipelineStage.Completed,
-                    sessionResult = result,
-                    loadingMoreStores = emptySet(),
-                    storeHasMore = result.storeReports.associate { it.store to (it.hasMore ?: (it.approvedCount > 0)) },
-                    storePages = StoreType.entries.associateWith { 1 }
-                )
+                _searchState.update { cur ->
+                    if (cur.lastSubmittedQuery != trimmed) {
+                        cur
+                    } else {
+                        cur.copy(
+                            stage = SearchPipelineStage.Completed,
+                            sessionResult = result,
+                            loadingMoreStores = emptySet(),
+                            storeHasMore = result.storeReports.associate { it.store to (it.hasMore ?: (it.approvedCount > 0)) },
+                            storePages = StoreType.entries.associateWith { 1 }
+                        )
+                    }
+                }
                 launchBackgroundStoreBackfill(trimmed, result)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Real-time search failed", e)
-                _searchState.value = _searchState.value.copy(
-                    stage = SearchPipelineStage.Error(
-                        "Não foi possível concluir a busca em tempo real. Verifique sua conexão e tente novamente."
-                    )
-                )
+                _searchState.update { cur ->
+                    if (cur.lastSubmittedQuery == trimmed) {
+                        cur.copy(
+                            stage = SearchPipelineStage.Error(
+                                "Não foi possível concluir a busca em tempo real. Verifique sua conexão e tente novamente."
+                            )
+                        )
+                    } else {
+                        cur
+                    }
+                }
             }
         }
     }
@@ -262,38 +283,54 @@ class AliShopViewModel(
 
     fun retrySearchStore(store: StoreType) {
         val current = _searchState.value
-        val session = current.sessionResult ?: return
+        if (current.sessionResult == null) return
         if (store in current.loadingMoreStores) return
         val querySnapshot = current.lastSubmittedQuery ?: return
 
-        _searchState.value = current.copy(loadingMoreStores = current.loadingMoreStores + store)
+        _searchState.update { it.copy(loadingMoreStores = it.loadingMoreStores + store) }
+        searchBackfillJobs.remove(store)?.cancel()
         searchLoadMoreJobs[store]?.cancel()
         searchLoadMoreJobs[store] = viewModelScope.launch {
             try {
-                val retried = searchOrchestrator.retrySingleStore(session, store)
-                val storeCount = retried.products.count { it.store == store }
-                searchStateMergeMutex.withLock {
-                    val latest = _searchState.value
-                    val latestSession = latest.sessionResult
-                    if (latest.lastSubmittedQuery == querySnapshot && latestSession != null) {
-                        val mergedProducts = (latestSession.products.filter { it.store != store } +
-                            retried.products.filter { it.store == store }).distinctBy { it.id }
-                        val updatedReport = retried.storeReports.firstOrNull { it.store == store }
-                        val mergedReports = latestSession.storeReports.map { r ->
-                            if (r.store == store && updatedReport != null) updatedReport else r
+                storeOperationMutexes.getValue(store).withLock {
+                    val snapshotBeforeFetch = _searchState.value
+                    val activeSession = snapshotBeforeFetch.sessionResult ?: return@withLock
+                    if (snapshotBeforeFetch.lastSubmittedQuery != querySnapshot) return@withLock
+
+                    val retried = searchOrchestrator.retrySingleStore(activeSession, store)
+                    val storeCount = retried.products.count { it.store == store }
+                    var backfillSession: SearchSessionResult? = null
+                    var shouldBackfill = false
+
+                    searchStateMergeMutex.withLock {
+                        val latest = _searchState.value
+                        val latestSession = latest.sessionResult
+                        if (latest.lastSubmittedQuery == querySnapshot && latestSession != null) {
+                            val mergedProducts = (latestSession.products.filter { it.store != store } +
+                                retried.products.filter { it.store == store }).distinctBy { it.id }
+                            val updatedReport = retried.storeReports.firstOrNull { it.store == store }
+                            val mergedReports = latestSession.storeReports.map { r ->
+                                if (r.store == store && updatedReport != null) updatedReport else r
+                            }
+                            val nextSession = latestSession.copy(
+                                products = mergedProducts,
+                                storeReports = mergedReports
+                            )
+                            val hasMoreForStore = updatedReport?.hasMore ?: (storeCount > 0)
+                            _searchState.value = latest.copy(
+                                sessionResult = nextSession,
+                                loadingMoreStores = latest.loadingMoreStores - store,
+                                storeHasMore = latest.storeHasMore + (store to hasMoreForStore),
+                                storePages = latest.storePages + (store to 1)
+                            )
+                            if (storeCount in 1 until 30 && hasMoreForStore) {
+                                backfillSession = nextSession
+                                shouldBackfill = true
+                            }
                         }
-                        val nextSession = latestSession.copy(
-                            products = mergedProducts,
-                            storeReports = mergedReports
-                        )
-                        val hasMoreForStore = updatedReport?.hasMore ?: (storeCount > 0)
-                        _searchState.value = latest.copy(
-                            sessionResult = nextSession,
-                            loadingMoreStores = latest.loadingMoreStores - store,
-                            storeHasMore = latest.storeHasMore + (store to hasMoreForStore),
-                            storePages = latest.storePages + (store to 1)
-                        )
-                        if (storeCount in 1 until 30 && hasMoreForStore) {
+                    }
+                    if (shouldBackfill) {
+                        backfillSession?.let { nextSession ->
                             launchBackgroundStoreBackfill(
                                 querySnapshot = querySnapshot,
                                 initialSession = nextSession,
@@ -307,9 +344,12 @@ class AliShopViewModel(
             } catch (e: Exception) {
                 Log.w(TAG, "Retry failed for $store", e)
             } finally {
-                val latest = _searchState.value
-                if (store in latest.loadingMoreStores) {
-                    _searchState.value = latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                _searchState.update { latest ->
+                    if (store in latest.loadingMoreStores) {
+                        latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                    } else {
+                        latest
+                    }
                 }
             }
         }
@@ -322,7 +362,7 @@ class AliShopViewModel(
         if (store in current.loadingMoreStores || current.storeHasMore[store] == false) return
 
         val querySnapshot = current.lastSubmittedQuery
-        _searchState.value = current.copy(loadingMoreStores = current.loadingMoreStores + store)
+        _searchState.update { it.copy(loadingMoreStores = it.loadingMoreStores + store) }
 
         searchLoadMoreJobs[store]?.cancel()
         searchLoadMoreJobs[store] = viewModelScope.launch {
@@ -369,14 +409,13 @@ class AliShopViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Load more search items failed for $store", e)
-                val latest = _searchState.value
-                _searchState.value = latest.copy(
-                    loadingMoreStores = latest.loadingMoreStores - store
-                )
             } finally {
-                val latest = _searchState.value
-                if (store in latest.loadingMoreStores) {
-                    _searchState.value = latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                _searchState.update { latest ->
+                    if (store in latest.loadingMoreStores) {
+                        latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                    } else {
+                        latest
+                    }
                 }
             }
         }
@@ -387,53 +426,60 @@ class AliShopViewModel(
         val session = current.sessionResult ?: return
         if (store in current.loadingMoreStores || current.storeHasMore[store] == false) return
 
-        val nextPage = (current.storePages[store] ?: 1) + 1
         val updatedAtSnapshot = session.updatedAtMillis
-        _promoState.value = current.copy(loadingMoreStores = current.loadingMoreStores + store)
+        _promoState.update { it.copy(loadingMoreStores = it.loadingMoreStores + store) }
 
         promoLoadMoreJobs[store]?.cancel()
         promoLoadMoreJobs[store] = viewModelScope.launch {
             try {
-                val (storeUpdatedPromo, hasMore) = searchOrchestrator.loadMoreWeeklyDeals(
-                    currentPromo = session,
-                    store = store,
-                    nextPage = nextPage
-                )
-                val latest = _promoState.value
-                val latestSession = latest.sessionResult
-                if (latestSession != null && latestSession.updatedAtMillis == updatedAtSnapshot) {
-                    val newItemsForStore = storeUpdatedPromo.products.filter { it.store == store }
-                    val mergedProducts = (latestSession.products + newItemsForStore).distinctBy { it.id }
-                    val updatedStoreReport = storeUpdatedPromo.storeReports.firstOrNull { it.store == store }
-                    val mergedReports = latestSession.storeReports.map { report ->
-                        if (report.store == store && updatedStoreReport != null) {
-                            updatedStoreReport.copy(approvedCount = mergedProducts.count { it.store == store })
-                        } else {
-                            report
+                promoOperationMutexes.getValue(store).withLock {
+                    val snapshotBeforeFetch = _promoState.value
+                    val activeSession = snapshotBeforeFetch.sessionResult ?: return@withLock
+                    if (activeSession.updatedAtMillis != updatedAtSnapshot) return@withLock
+                    val nextPage = (snapshotBeforeFetch.storePages[store] ?: 1) + 1
+
+                    val (storeUpdatedPromo, hasMore) = searchOrchestrator.loadMoreWeeklyDeals(
+                        currentPromo = activeSession,
+                        store = store,
+                        nextPage = nextPage
+                    )
+                    promoStateMergeMutex.withLock {
+                        val latest = _promoState.value
+                        val latestSession = latest.sessionResult
+                        if (latestSession != null && latestSession.updatedAtMillis == updatedAtSnapshot) {
+                            val newItemsForStore = storeUpdatedPromo.products.filter { it.store == store }
+                            val mergedProducts = (latestSession.products + newItemsForStore).distinctBy { it.id }
+                            val updatedStoreReport = storeUpdatedPromo.storeReports.firstOrNull { it.store == store }
+                            val mergedReports = latestSession.storeReports.map { report ->
+                                if (report.store == store && updatedStoreReport != null) {
+                                    updatedStoreReport.copy(approvedCount = mergedProducts.count { it.store == store })
+                                } else {
+                                    report
+                                }
+                            }
+                            _promoState.value = latest.copy(
+                                sessionResult = latestSession.copy(
+                                    products = mergedProducts,
+                                    storeReports = mergedReports
+                                ),
+                                loadingMoreStores = latest.loadingMoreStores - store,
+                                storeHasMore = latest.storeHasMore + (store to hasMore),
+                                storePages = latest.storePages + (store to maxOf(latest.storePages[store] ?: 1, nextPage))
+                            )
                         }
                     }
-                    _promoState.value = latest.copy(
-                        sessionResult = latestSession.copy(
-                            products = mergedProducts,
-                            storeReports = mergedReports
-                        ),
-                        loadingMoreStores = latest.loadingMoreStores - store,
-                        storeHasMore = latest.storeHasMore + (store to hasMore),
-                        storePages = latest.storePages + (store to nextPage)
-                    )
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Load more promo items failed for $store", e)
-                val latest = _promoState.value
-                _promoState.value = latest.copy(
-                    loadingMoreStores = latest.loadingMoreStores - store
-                )
             } finally {
-                val latest = _promoState.value
-                if (store in latest.loadingMoreStores) {
-                    _promoState.value = latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                _promoState.update { latest ->
+                    if (store in latest.loadingMoreStores) {
+                        latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                    } else {
+                        latest
+                    }
                 }
             }
         }
@@ -448,40 +494,50 @@ class AliShopViewModel(
         if (store in current.loadingMoreStores) return
 
         val updatedAtSnapshot = session.updatedAtMillis
-        _promoState.value = current.copy(loadingMoreStores = current.loadingMoreStores + store)
+        _promoState.update { it.copy(loadingMoreStores = it.loadingMoreStores + store) }
         promoLoadMoreJobs[store]?.cancel()
         promoLoadMoreJobs[store] = viewModelScope.launch {
             try {
-                val retried = searchOrchestrator.retryWeeklyStore(session, store)
-                val storeCount = retried.products.count { it.store == store }
-                val latest = _promoState.value
-                val latestSession = latest.sessionResult
-                if (latestSession != null && latestSession.updatedAtMillis == updatedAtSnapshot) {
-                    val mergedProducts = (latestSession.products.filter { it.store != store } +
-                        retried.products.filter { it.store == store }).distinctBy { it.id }
-                    val updatedReport = retried.storeReports.firstOrNull { it.store == store }
-                    val mergedReports = latestSession.storeReports.map { r ->
-                        if (r.store == store && updatedReport != null) updatedReport else r
+                promoOperationMutexes.getValue(store).withLock {
+                    val snapshotBeforeFetch = _promoState.value
+                    val activeSession = snapshotBeforeFetch.sessionResult ?: return@withLock
+                    if (activeSession.updatedAtMillis != updatedAtSnapshot) return@withLock
+
+                    val retried = searchOrchestrator.retryWeeklyStore(activeSession, store)
+                    val storeCount = retried.products.count { it.store == store }
+                    promoStateMergeMutex.withLock {
+                        val latest = _promoState.value
+                        val latestSession = latest.sessionResult
+                        if (latestSession != null && latestSession.updatedAtMillis == updatedAtSnapshot) {
+                            val mergedProducts = (latestSession.products.filter { it.store != store } +
+                                retried.products.filter { it.store == store }).distinctBy { it.id }
+                            val updatedReport = retried.storeReports.firstOrNull { it.store == store }
+                            val mergedReports = latestSession.storeReports.map { r ->
+                                if (r.store == store && updatedReport != null) updatedReport else r
+                            }
+                            _promoState.value = latest.copy(
+                                sessionResult = latestSession.copy(
+                                    products = mergedProducts,
+                                    storeReports = mergedReports
+                                ),
+                                loadingMoreStores = latest.loadingMoreStores - store,
+                                storeHasMore = latest.storeHasMore + (store to (storeCount > 0)),
+                                storePages = latest.storePages + (store to 1)
+                            )
+                        }
                     }
-                    _promoState.value = latest.copy(
-                        sessionResult = latestSession.copy(
-                            products = mergedProducts,
-                            storeReports = mergedReports,
-                            updatedAtMillis = retried.updatedAtMillis
-                        ),
-                        loadingMoreStores = latest.loadingMoreStores - store,
-                        storeHasMore = latest.storeHasMore + (store to (storeCount > 0)),
-                        storePages = latest.storePages + (store to 1)
-                    )
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Retry promo store failed for $store", e)
             } finally {
-                val latest = _promoState.value
-                if (store in latest.loadingMoreStores) {
-                    _promoState.value = latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                _promoState.update { latest ->
+                    if (store in latest.loadingMoreStores) {
+                        latest.copy(loadingMoreStores = latest.loadingMoreStores - store)
+                    } else {
+                        latest
+                    }
                 }
             }
         }

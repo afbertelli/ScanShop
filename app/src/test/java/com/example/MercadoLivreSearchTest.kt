@@ -3,7 +3,7 @@ package com.example
 import android.util.Base64
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
-import com.example.data.local.AliShopDatabase
+import com.example.data.local.ScanShopDatabase
 import com.example.data.model.DomainDiscoveryHint
 import com.example.data.model.MatchVerdict
 import com.example.data.model.MatchedProduct
@@ -1367,7 +1367,7 @@ class MercadoLivreSearchTest {
     @Test
     fun `favoriteRepository stores, toggles, removes, and clears only saved favorite cards`() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-        val db = Room.inMemoryDatabaseBuilder(context, AliShopDatabase::class.java)
+        val db = Room.inMemoryDatabaseBuilder(context, ScanShopDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         try {
