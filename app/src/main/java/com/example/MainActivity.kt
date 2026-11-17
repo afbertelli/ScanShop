@@ -1,44 +1,89 @@
 package com.example
 
+import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.example.data.ai.AiSearchService
+import androidx.activity.viewModels
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import coil.Coil
+import coil.ImageLoader
+import coil.request.CachePolicy
+import com.example.ai.configureAppCheck
 import com.example.data.local.AliShopDatabase
-import com.example.data.repository.AffiliateProductRepository
+import com.example.data.network.MercadoLivreClient
+import com.example.data.network.NetworkClientProvider
 import com.example.data.repository.FavoriteRepository
+import com.example.data.search.RealTimeSearchOrchestrator
 import com.example.ui.AliShopApp
-import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.AliShopTheme
 import com.example.ui.viewmodel.AliShopViewModel
 
-import com.example.data.monitor.PriceMonitoringManager
-import com.example.data.notification.PriceNotificationHelper
-
 class MainActivity : ComponentActivity() {
+
+    private val viewModel: AliShopViewModel by viewModels {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                val mlClient = MercadoLivreClient(applicationContext)
+                val searchOrchestrator = RealTimeSearchOrchestrator(mercadoLivreClient = mlClient)
+                val database = AliShopDatabase.getInstance(applicationContext)
+                val favoriteRepository = FavoriteRepository(database.favoriteDao())
+                return AliShopViewModel(
+                    searchOrchestrator = searchOrchestrator,
+                    favoriteRepository = favoriteRepository
+                ) as T
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Required: Configure Firebase App Check with launch intent before any UI, ViewModels, or Firebase calls
+        configureAppCheck(this, intent)
+
+        // Ensure no cached search/promo images remain on disk; Room database stores only Favoritos
+        runCatching {
+            applicationContext.cacheDir.resolve("image_cache").deleteRecursively()
+        }
+
+        Coil.setImageLoader {
+            val imageClient = NetworkClientProvider.httpClient.newBuilder()
+                .addInterceptor { chain ->
+                    val orig = chain.request()
+                    val host = orig.url.host.lowercase()
+                    val builder = orig.newBuilder()
+                        .header(
+                            "User-Agent",
+                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+                        )
+                        .header("Accept", "image/webp,image/jpeg,image/png,image/*;q=0.8")
+                    when {
+                        host.contains("bing.com") || host.contains("bing.net") ->
+                            builder.header("Referer", "https://www.bing.com/")
+                        host.contains("mlstatic.com") || host.contains("mercadolivre") ->
+                            builder.header("Referer", "https://www.mercadolivre.com.br/")
+                        host.contains("yimg.com") ->
+                            builder.header("Referer", "https://br.images.search.yahoo.com/")
+                        host.contains("gstatic.com") ->
+                            builder.header("Referer", "https://www.google.com/")
+                    }
+                    chain.proceed(builder.build())
+                }
+                .build()
+            ImageLoader.Builder(applicationContext)
+                .okHttpClient(imageClient)
+                .diskCachePolicy(CachePolicy.DISABLED)
+                .crossfade(true)
+                .build()
+        }
+
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         enableEdgeToEdge()
-
-        PriceNotificationHelper.createNotificationChannel(applicationContext)
-
-        val db = AliShopDatabase.getDatabase(applicationContext)
-
-        val favoriteRepository = FavoriteRepository(db.favoriteDao())
-        val affiliateRepository = AffiliateProductRepository()
-        val aiSearchService = AiSearchService()
-        val priceMonitoringManager = PriceMonitoringManager(
-            context = applicationContext,
-            favoriteRepository = favoriteRepository,
-            affiliateRepository = affiliateRepository
-        )
-
-        val viewModel = AliShopViewModel(
-            affiliateRepository = affiliateRepository,
-            favoriteRepository = favoriteRepository,
-            aiSearchService = aiSearchService,
-            priceMonitoringManager = priceMonitoringManager
-        )
 
         val initialTab = intent.getIntExtra("EXTRA_NAVIGATE_TAB", -1)
         if (initialTab >= 0) {
@@ -46,9 +91,18 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MyApplicationTheme {
+            AliShopTheme {
                 AliShopApp(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val tab = intent.getIntExtra("EXTRA_NAVIGATE_TAB", -1)
+        if (tab >= 0) {
+            viewModel.selectTab(tab)
         }
     }
 }

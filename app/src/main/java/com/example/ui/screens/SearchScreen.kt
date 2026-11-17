@@ -7,120 +7,75 @@ import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.Orientation
-import androidx.compose.foundation.gestures.draggable
-import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Compare
-import androidx.compose.material.icons.filled.ElectricBolt
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.ShoppingBag
-import androidx.compose.material.icons.filled.ShoppingCart
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
-import androidx.compose.ui.input.nestedscroll.NestedScrollSource
-import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.example.data.model.Product
-import com.example.data.repository.ProductFilter
-import com.example.ui.components.CompactProductCard
+import com.example.R
+import com.example.data.model.MatchedProduct
+import com.example.data.model.SearchPipelineStage
+import com.example.data.model.SearchSessionResult
+import com.example.data.model.StoreFetchReport
+import com.example.data.model.StoreType
 import com.example.ui.components.SearchBarComponent
-import com.example.ui.components.SearchLoadingSplashScreen
-import com.example.ui.components.TechnicalSpecsSheet
-import com.example.ui.components.UnifiedProductCard
+import com.example.ui.components.StoreSectionCard
+import com.example.ui.components.shareProduct
 import com.example.ui.theme.AliExpressRed
 import com.example.ui.theme.DealGreen
 import com.example.ui.theme.DealGreenBg
-import com.example.ui.theme.ShopeeOrange
+import com.example.ui.util.DeepLinkUtils
 import com.example.ui.viewmodel.SearchUiState
-import com.example.ui.viewmodel.ViewMode
 
 @Composable
 fun SearchScreen(
     state: SearchUiState,
-    favoriteIds: Set<String>,
     onQueryChanged: (String) -> Unit,
     onSearch: (String) -> Unit,
-    onFilterSelected: (ProductFilter) -> Unit,
-    onToggleFavorite: (Product) -> Unit,
-    onToggleViewMode: () -> Unit = {},
+    favoriteIds: Set<String> = emptySet(),
+    onToggleFavorite: ((MatchedProduct) -> Unit)? = null,
+    onLoadMoreStore: (StoreType) -> Unit = {},
+    onRetryStore: (StoreType) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val hasResults = state.comparisonResult != null &&
-            (state.comparisonResult.aliExpressProducts.isNotEmpty() || state.comparisonResult.shopeeProducts.isNotEmpty())
-
     val context = LocalContext.current
 
     val voiceLauncher = rememberLauncherForActivityResult(
@@ -135,7 +90,6 @@ fun SearchScreen(
             if (!spokenText.isNullOrBlank()) {
                 onQueryChanged(spokenText)
                 onSearch(spokenText)
-                Toast.makeText(context, "Pesquisando por: \"$spokenText\"", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -148,10 +102,10 @@ fun SearchScreen(
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "pt-BR")
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o produto ou categoria desejada...")
+                putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o produto que procura...")
             }
             voiceLauncher.launch(intent)
-        } catch (e: ActivityNotFoundException) {
+        } catch (_: ActivityNotFoundException) {
             Toast.makeText(
                 context,
                 "Reconhecimento de voz não suportado neste aparelho.",
@@ -160,1178 +114,399 @@ fun SearchScreen(
         }
     }
 
-    var isHeaderCollapsed by rememberSaveable { mutableStateOf(false) }
-    var activeSpecFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    val lazyListState = rememberLazyListState()
-
-    // Expand search bar when user triggers a new search and reset spec filter
-    LaunchedEffect(state.isSearching) {
-        if (state.isSearching) {
-            isHeaderCollapsed = false
-            activeSpecFilter = null
-        }
-    }
-
-    // Scroll listener: dragging/scrolling down collapses search + banner; pulling down at top expands
-    val nestedScrollConnection = remember(hasResults) {
-        object : NestedScrollConnection {
-            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                val delta = available.y
-                if (hasResults) {
-                    // Scrolling down into products list
-                    if (delta < -8f && !isHeaderCollapsed) {
-                        isHeaderCollapsed = true
-                    }
-                    // Dragging down at the very top of the list
-                    else if (delta > 14f && isHeaderCollapsed && lazyListState.firstVisibleItemIndex == 0 && lazyListState.firstVisibleItemScrollOffset <= 10) {
-                        isHeaderCollapsed = false
-                    }
-                }
-                return Offset.Zero
-            }
-        }
-    }
-
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .testTag("search_screen")
     ) {
-        Column(
+        SearchBarComponent(
+            query = state.query,
+            onQueryChanged = onQueryChanged,
+            onSearch = onSearch,
+            onVoiceSearchClick = startVoiceSearch
+        )
+
+        when (val stage = state.stage) {
+            is SearchPipelineStage.Idle -> IdleSearchHero()
+
+            is SearchPipelineStage.AnalyzingIntent,
+            is SearchPipelineStage.FetchingStores,
+            is SearchPipelineStage.NeuralAndAiScoring -> {
+                PipelineProgressCard(
+                    query = state.lastSubmittedQuery.orEmpty(),
+                    stage = stage
+                )
+            }
+
+            is SearchPipelineStage.Error -> {
+                ErrorStateCard(message = stage.message)
+            }
+
+            is SearchPipelineStage.Completed -> {
+                val result = state.sessionResult
+                if (result == null) {
+                    IdleSearchHero()
+                } else {
+                    val openStoreHandler = remember(context) {
+                        { product: MatchedProduct ->
+                            DeepLinkUtils.openAffiliateUrl(
+                                context = context,
+                                store = product.store,
+                                affiliateUrl = product.affiliateUrl,
+                                deepLinkUrl = product.deepLinkUrl
+                            )
+                        }
+                    }
+                    val shareProductHandler = remember(context) {
+                        { product: MatchedProduct ->
+                            shareProduct(context, product)
+                        }
+                    }
+                    CompletedSearchContent(
+                        result = result,
+                        loadingMoreStores = state.loadingMoreStores,
+                        storeHasMore = state.storeHasMore,
+                        favoriteIds = favoriteIds,
+                        onToggleFavorite = onToggleFavorite,
+                        onLoadMoreStore = onLoadMoreStore,
+                        onRetryStore = onRetryStore,
+                        onOpenStore = openStoreHandler,
+                        onShare = shareProductHandler
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun IdleSearchHero() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
             modifier = Modifier
-                .fillMaxSize()
-                .nestedScroll(nestedScrollConnection)
-        ) {
-        // Collapsible Search Bar + Filters + Comparison Banner (collapses when dragged/scrolled down)
-        AnimatedVisibility(
-            visible = !isHeaderCollapsed || !hasResults,
-            enter = expandVertically(animationSpec = tween(220)) + fadeIn(animationSpec = tween(220)),
-            exit = shrinkVertically(animationSpec = tween(220)) + fadeOut(animationSpec = tween(220))
+                .fillMaxWidth()
+                .widthIn(max = 540.dp),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .draggable(
-                        orientation = Orientation.Vertical,
-                        state = rememberDraggableState { delta ->
-                            if (hasResults) {
-                                if (delta < -8f && !isHeaderCollapsed) {
-                                    isHeaderCollapsed = true
-                                } else if (delta > 15f && isHeaderCollapsed) {
-                                    isHeaderCollapsed = false
-                                }
-                            }
-                        }
-                    )
+                    .padding(horizontal = 24.dp, vertical = 26.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                SearchBarComponent(
-                    query = state.query,
-                    onQueryChanged = onQueryChanged,
-                    onSearch = onSearch,
-                    recentSearches = state.recentSearches,
-                    selectedFilter = state.filter,
-                    onFilterSelected = onFilterSelected,
-                    onVoiceSearchClick = startVoiceSearch
-                )
-
-                ComparisonHeaderBar(
-                    state = state,
-                    onCollapse = { isHeaderCollapsed = true },
-                    canCollapse = hasResults
-                )
-
-                // Barra Inteligente e Profissional de Filtros e Chips Técnicos (IA)
-                val compResult = state.comparisonResult
-                val allProducts = compResult?.unifiedSorted.orEmpty()
-                val detectedBrands = remember(compResult) {
-                    allProducts.mapNotNull { it.brand }
-                        .filter { it.isNotBlank() && it != "Oficial" && it != "Gamer / OEM" }
-                        .distinct()
-                        .take(4)
-                }
-                val detectedCapacities = remember(compResult) {
-                    allProducts.mapNotNull { it.capacity }
-                        .distinct()
-                        .take(4)
-                }
-                val detectedChips = compResult?.aiInsight?.technicalSpecs?.keyHighlightChips.orEmpty()
-                    .filter { chip -> !detectedBrands.contains(chip) && !detectedCapacities.contains(chip) }
-                    .take(4)
-
-                if (hasResults) {
-                    LazyRow(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFFF8FAFC))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        item {
-                            Surface(
-                                onClick = { activeSpecFilter = null },
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (activeSpecFilter == null) Color(0xFF0F172A) else Color.White,
-                                border = BorderStroke(0.5.dp, if (activeSpecFilter == null) Color(0xFF0F172A) else Color(0xFFCBD5E1))
-                            ) {
-                                Text(
-                                    text = "Todos",
-                                    fontSize = 11.sp,
-                                    fontWeight = if (activeSpecFilter == null) FontWeight.Bold else FontWeight.Medium,
-                                    color = if (activeSpecFilter == null) Color.White else Color(0xFF334155),
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.5.dp)
-                                )
-                            }
-                        }
-                        if ((compResult?.verifiedSellersCount ?: 0) > 0 || allProducts.any { it.sellerTrust?.isVerified == true }) {
-                            item {
-                                val isSelected = activeSpecFilter == "VERIFIED_ONLY"
-                                Surface(
-                                    onClick = { activeSpecFilter = if (isSelected) null else "VERIFIED_ONLY" },
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = if (isSelected) Color(0xFF047857) else Color.White,
-                                    border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF047857) else Color(0xFFA7F3D0)),
-                                    modifier = Modifier.testTag("chip_filter_verified_sellers")
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
-                                    ) {
-                                        Text(
-                                            text = "🛡️ Vendedores Verificados",
-                                            fontSize = 11.sp,
-                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
-                                            color = if (isSelected) Color.White else Color(0xFF047857)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        items(detectedBrands) { brand ->
-                            val filterKey = "BRAND:$brand"
-                            val isSelected = activeSpecFilter == filterKey
-                            Surface(
-                                onClick = { activeSpecFilter = if (isSelected) null else filterKey },
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (isSelected) Color(0xFF3730A3) else Color.White,
-                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF3730A3) else Color(0xFFC7D2FE))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
-                                ) {
-                                    Text(
-                                        text = "🏷️ $brand",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else Color(0xFF3730A3)
-                                    )
-                                }
-                            }
-                        }
-                        items(detectedCapacities) { cap ->
-                            val filterKey = "CAPACITY:$cap"
-                            val isSelected = activeSpecFilter == filterKey
-                            Surface(
-                                onClick = { activeSpecFilter = if (isSelected) null else filterKey },
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (isSelected) Color(0xFF065F46) else Color.White,
-                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF065F46) else Color(0xFFA7F3D0))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
-                                ) {
-                                    Text(
-                                        text = "💾 $cap",
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else Color(0xFF065F46)
-                                    )
-                                }
-                            }
-                        }
-                        items(detectedChips) { chip ->
-                            val isSelected = activeSpecFilter == chip
-                            Surface(
-                                onClick = { activeSpecFilter = if (isSelected) null else chip },
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (isSelected) Color(0xFF7E22CE) else Color.White,
-                                border = BorderStroke(0.5.dp, if (isSelected) Color(0xFF7E22CE) else Color(0xFFD8B4FE))
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.5.dp)
-                                ) {
-                                    Text(
-                                        text = chip,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                        color = if (isSelected) Color.White else Color(0xFF7E22CE)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Main content with foreground Modal Popup overlay
-        Box(modifier = Modifier.fillMaxSize()) {
-            // Background Layer: Search results, discovery hub or error state
-            if (state.errorMessage != null && state.comparisonResult == null) {
                 Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CloudOff,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Erro ao buscar ofertas em tempo real",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF1E293B)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = state.errorMessage,
-                            fontSize = 13.sp,
-                            color = Color(0xFF64748B),
-                            textAlign = TextAlign.Center
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { onSearch(state.query) },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                            shape = RoundedCornerShape(20.dp)
-                        ) {
-                            Text("Tentar novamente", color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            } else {
-                val result = state.comparisonResult
-                if (result == null || (result.aliExpressProducts.isEmpty() && result.shopeeProducts.isEmpty())) {
-                    EmptySearchState(
-                        query = state.query,
-                        onVoiceSearchClick = startVoiceSearch,
-                        onCategoryClick = onSearch
-                    )
-                } else {
-                    val filterPredicate: (Product) -> Boolean = { p ->
-                        when {
-                            activeSpecFilter == null -> true
-                            activeSpecFilter == "VERIFIED_ONLY" -> p.sellerTrust?.isVerified == true
-                            activeSpecFilter!!.startsWith("BRAND:") -> {
-                                val targetBrand = activeSpecFilter!!.removePrefix("BRAND:")
-                                p.brand?.equals(targetBrand, ignoreCase = true) == true ||
-                                        p.title.contains(targetBrand, ignoreCase = true)
-                            }
-                            activeSpecFilter!!.startsWith("CAPACITY:") -> {
-                                val targetCap = activeSpecFilter!!.removePrefix("CAPACITY:")
-                                p.capacity?.contains(targetCap, ignoreCase = true) == true ||
-                                        p.title.contains(targetCap, ignoreCase = true)
-                            }
-                            else -> {
-                                val cleanFilter = activeSpecFilter!!.lowercase(java.util.Locale.ROOT)
-                                p.title.lowercase(java.util.Locale.ROOT).contains(cleanFilter) ||
-                                        p.brand?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
-                                        p.capacity?.lowercase(java.util.Locale.ROOT)?.contains(cleanFilter) == true ||
-                                        p.technicalSpecs?.keyHighlightChips?.any { it.contains(activeSpecFilter!!, ignoreCase = true) } == true
-                            }
-                        }
-                    }
-
-                    val aliList = if (activeSpecFilter == null) result.aliExpressProducts else result.aliExpressProducts.filter(filterPredicate).ifEmpty { result.aliExpressProducts }
-                    val shpList = if (activeSpecFilter == null) result.shopeeProducts else result.shopeeProducts.filter(filterPredicate).ifEmpty { result.shopeeProducts }
-                    val unifiedList = if (activeSpecFilter == null) result.unifiedSortedProducts else result.unifiedSortedProducts.filter(filterPredicate).ifEmpty { result.unifiedSortedProducts }
-
-                    val totalExact = aliList.size + shpList.size
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        if (totalExact in 1..10) {
-                            Surface(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFFF0FDF4),
-                                border = BorderStroke(0.5.dp, Color(0xFFBBF7D0))
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.CheckCircle,
-                                        contentDescription = null,
-                                        tint = Color(0xFF16A34A),
-                                        modifier = Modifier.size(14.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Mostrando apenas resultados que correspondem exatamente à sua busca",
-                                        fontSize = 11.5.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Color(0xFF15803D)
-                                    )
-                                }
-                            }
-                        }
-
-                        Box(modifier = Modifier.weight(1f)) {
-                            when (state.viewMode) {
-                                ViewMode.SIDE_BY_SIDE -> {
-                                    SideBySideComparisonView(
-                                        aliProducts = aliList,
-                                        shopeeProducts = shpList,
-                                        favoriteIds = favoriteIds,
-                                        onToggleFavorite = onToggleFavorite,
-                                        listState = lazyListState,
-                                        isHeaderCollapsed = isHeaderCollapsed,
-                                        onToggleCollapse = { isHeaderCollapsed = !isHeaderCollapsed }
-                                    )
-                                }
-                                ViewMode.UNIFIED_LIST -> {
-                                    UnifiedListView(
-                                        products = unifiedList,
-                                        winnerId = result.bestOverallDeal?.id,
-                                        favoriteIds = favoriteIds,
-                                        onToggleFavorite = onToggleFavorite
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Foreground Modal Popup: aparece em destaque na frente de todo o app
-    if (state.isSearching) {
-        SearchLoadingSplashScreen(
-            query = state.query,
-            modifier = Modifier.fillMaxSize()
-        )
-    }
-}
-}
-
-@Composable
-private fun ComparisonHeaderBar(
-    state: SearchUiState,
-    onCollapse: () -> Unit = {},
-    canCollapse: Boolean = false,
-    modifier: Modifier = Modifier
-) {
-    val result = state.comparisonResult
-    val best = result?.bestOverallDeal
-    var showQuerySpecsSheet by rememberSaveable { mutableStateOf(false) }
-
-    if (showQuerySpecsSheet && result?.aiInsight?.technicalSpecs != null) {
-        val queryProduct = Product(
-            id = "query_specs",
-            store = best?.store ?: com.example.data.model.StoreType.ALIEXPRESS,
-            title = "Análise Neural da Consulta: \"${result.query}\"",
-            imageUrl = best?.imageUrl ?: "",
-            originalPrice = 0.0,
-            promoPrice = best?.promoPrice ?: 0.0,
-            discountPercentage = 0,
-            rating = 5.0,
-            salesCount = 0,
-            freeShipping = true,
-            nationalSeller = false,
-            couponAvailable = false,
-            affiliateUrl = "",
-            deepLinkUrl = "",
-            technicalSpecs = result.aiInsight.technicalSpecs
-        )
-        TechnicalSpecsSheet(
-            product = queryProduct,
-            onDismiss = { showQuerySpecsSheet = false }
-        )
-    }
-
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = Color(0xFFF8FAFC),
-        border = BorderStroke(0.5.dp, Color(0xFFE2E8F0))
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f, fill = false)
-            ) {
-                // AI Intelligence badge if active and available
-                if (result?.aiInsight != null) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFFF3E8FF))
-                            .border(BorderStroke(0.5.dp, Color(0xFFD8B4FE)), RoundedCornerShape(6.dp))
-                            .clickable { showQuerySpecsSheet = true }
-                            .padding(horizontal = 6.dp, vertical = 3.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Ver Ficha Neural da Busca",
-                                tint = Color(0xFF7E22CE),
-                                modifier = Modifier.size(11.5.dp)
-                            )
-                            Spacer(modifier = Modifier.width(3.5.dp))
-                            Text(
-                                text = result.aiInsight.summary ?: "IA Ativa",
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF6B21A8),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (result.aiInsight.filteredAccessoriesCount > 0) {
-                        Spacer(modifier = Modifier.width(5.dp))
-                        val filterLabel = when {
-                            result.aiInsight.categoryKey == "placa mae" ->
-                                "${result.aiInsight.filteredAccessoriesCount} espelhos/peças filtrados"
-                            result.aiInsight.targetGender != null ->
-                                "${result.aiInsight.filteredAccessoriesCount} conflitos de gênero/acessórios filtrados"
-                            else ->
-                                "${result.aiInsight.filteredAccessoriesCount} itens incompatíveis/peças filtrados"
-                        }
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFFEF2F2))
-                                .border(BorderStroke(0.5.dp, Color(0xFFFECACA)), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = "🛡️ $filterLabel",
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFFDC2626),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (result.aiInsight.didYouMean != null) {
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFEFF6FF))
-                                .border(BorderStroke(0.5.dp, Color(0xFFBFDBFE)), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = "💡 ${result.aiInsight.didYouMean}",
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1D4ED8),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                }
-
-                // Price comparison insight badge
-                if (best != null) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(DealGreenBg)
-                            .border(BorderStroke(0.5.dp, Color(0xFFA7F3D0)), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp, vertical = 3.5.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.ElectricBolt,
-                                contentDescription = null,
-                                tint = DealGreen,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Menor: ${best.formattedPromoPrice} (${best.store.displayName})",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = DealGreen,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                softWrap = false
-                            )
-                        }
-                    }
-                    if ((result?.verifiedSellersCount ?: 0) > 0) {
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFECFDF5))
-                                .border(BorderStroke(0.5.dp, Color(0xFFA7F3D0)), RoundedCornerShape(6.dp))
-                                .padding(horizontal = 8.dp, vertical = 3.5.dp)
-                        ) {
-                            Text(
-                                text = "🛡️ ${result?.verifiedSellersCount} Verificados",
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF047857),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFFEEF2FF))
-                            .border(BorderStroke(0.5.dp, Color(0xFFC7D2FE)), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 7.dp, vertical = 3.5.dp)
-                    ) {
-                        Text(
-                            text = "Modo Profissional",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF3730A3),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Compare,
-                            contentDescription = null,
-                            tint = Color(0xFF64748B),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "Comparador AliExpress x Shopee em Tempo Real",
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF64748B),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-
-            // Collapse action indicator when items are loaded
-            if (canCollapse) {
-                Surface(
-                    onClick = onCollapse,
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFFF1F5F9),
-                    border = BorderStroke(0.5.dp, Color(0xFFCBD5E1))
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowUp,
-                            contentDescription = "Recolher busca",
-                            tint = Color(0xFF475569),
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(
-                            text = "Recolher",
-                            fontSize = 10.sp,
-                            color = Color(0xFF475569),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SideBySideComparisonView(
-    aliProducts: List<Product>,
-    shopeeProducts: List<Product>,
-    favoriteIds: Set<String>,
-    onToggleFavorite: (Product) -> Unit,
-    listState: LazyListState,
-    isHeaderCollapsed: Boolean,
-    onToggleCollapse: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val maxRows = maxOf(aliProducts.size, shopeeProducts.size)
-
-    Column(modifier = modifier.fillMaxSize()) {
-        // Sticky Store Header Row with prominent VS badge / Quick expand when collapsed
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left Header (AliExpress)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFFFF1EE))
-                    .border(BorderStroke(1.dp, Color(0xFFFFCDC2)), RoundedCornerShape(10.dp))
-                    .padding(vertical = 7.dp, horizontal = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(AliExpressRed),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ShoppingCart,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "AliExpress",
-                            color = AliExpressRed,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-
-                    // Count Badge
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White)
-                            .border(BorderStroke(0.5.dp, Color(0xFFFFB3A1)), RoundedCornerShape(10.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = "${aliProducts.size}",
-                            color = AliExpressRed,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-
-            // Central Badge: VS (when expanded) or Expand Search button (when collapsed)
-            if (isHeaderCollapsed) {
-                Surface(
-                    onClick = onToggleCollapse,
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF0F172A),
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Expandir busca e filtros",
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text(
-                            text = "Busca",
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .padding(horizontal = 4.dp)
+                        .size(56.dp)
                         .clip(CircleShape)
-                        .background(Color(0xFF0F172A))
-                        .clickable { onToggleCollapse() }
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                        .background(Color(0xFFFFF1EE)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "VS",
-                        fontSize = 8.5.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        tint = AliExpressRed,
+                        modifier = Modifier.size(28.dp)
                     )
                 }
-            }
 
-            // Right Header (Shopee)
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFFFFF2ED))
-                    .border(BorderStroke(1.dp, Color(0xFFFFCEBA)), RoundedCornerShape(10.dp))
-                    .padding(vertical = 7.dp, horizontal = 9.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f, fill = false)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(22.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(ShopeeOrange),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ShoppingBag,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Shopee",
-                            color = ShopeeOrange,
-                            fontSize = 12.5.sp,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
+                Text(
+                    text = "Busca em Tempo Real",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center
+                )
 
-                    // Count Badge
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White)
-                            .border(BorderStroke(0.5.dp, Color(0xFFFFBA9E)), RoundedCornerShape(10.dp))
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = "${shopeeProducts.size}",
-                            color = ShopeeOrange,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                    }
-                }
-            }
-        }
-
-        // Synchronized Scrolling List of Pairs
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp),
-            contentPadding = PaddingValues(bottom = 80.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(count = maxRows) { index ->
-                val aliItem = aliProducts.getOrNull(index)
-                val shopeeItem = shopeeProducts.getOrNull(index)
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(IntrinsicSize.Max),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    // Left Column Item
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                    ) {
-                        if (aliItem != null) {
-                            CompactProductCard(
-                                product = aliItem,
-                                isFavorite = favoriteIds.contains(aliItem.id),
-                                onToggleFavorite = { onToggleFavorite(aliItem) },
-                                modifier = Modifier.fillMaxHeight()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .border(1.dp, Color(0xFFE4E7EC), RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFFAFAFA))
-                                    .padding(8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (aliProducts.isEmpty() && index == 0)
-                                        "Nenhum produto compatível no AliExpress para este modelo"
-                                    else
-                                        "Sem mais ofertas",
-                                    fontSize = 11.sp,
-                                    color = Color.Gray,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-
-                    // Right Column Item
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                    ) {
-                        if (shopeeItem != null) {
-                            CompactProductCard(
-                                product = shopeeItem,
-                                isFavorite = favoriteIds.contains(shopeeItem.id),
-                                onToggleFavorite = { onToggleFavorite(shopeeItem) },
-                                modifier = Modifier.fillMaxHeight()
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .border(1.dp, Color(0xFFE4E7EC), RoundedCornerShape(10.dp))
-                                    .background(Color(0xFFFAFAFA))
-                                    .padding(8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (shopeeProducts.isEmpty() && index == 0)
-                                        "Nenhum produto compatível na Shopee para este modelo"
-                                    else
-                                        "Sem mais ofertas",
-                                    fontSize = 11.sp,
-                                    color = Color.Gray,
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        }
-                    }
-                }
+                Text(
+                    text = "Compare resultados ao vivo no Mercado Livre, Shopee e AliExpress digitando o nome, marca ou modelo do produto.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
             }
         }
     }
 }
 
 @Composable
-private fun UnifiedListView(
-    products: List<Product>,
-    winnerId: String?,
-    favoriteIds: Set<String>,
-    onToggleFavorite: (Product) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 80.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+private fun StableSearchSpinner() {
+    Box(
+        modifier = Modifier.size(28.dp),
+        contentAlignment = Alignment.Center
     ) {
-        items(products, key = { it.id }) { product ->
-            UnifiedProductCard(
-                product = product,
-                isWinner = product.id == winnerId,
-                isFavorite = favoriteIds.contains(product.id),
-                onToggleFavorite = { onToggleFavorite(product) }
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun EmptySearchState(
-    query: String,
-    onVoiceSearchClick: () -> Unit = {},
-    onCategoryClick: (String) -> Unit = {}
-) {
-    val trendingCategories = remember {
-        listOf(
-            "🎮 Mouse Gamer" to "Mouse Gamer",
-            "🎧 Fone Bluetooth" to "Fone Bluetooth",
-            "⌚ Smartwatch" to "Smartwatch",
-            "⌨️ Teclado Mecânico" to "Teclado Mecânico",
-            "📱 Smartphone" to "Smartphone",
-            "💾 SSD NVMe" to "SSD NVMe",
-            "🕹️ Controle / Gamepad" to "Controle Gamepad",
-            "🔋 Power Bank" to "Power Bank"
+        CircularProgressIndicator(
+            modifier = Modifier.size(26.dp),
+            color = AliExpressRed,
+            strokeWidth = 3.dp
         )
     }
+}
 
-    LazyColumn(
+@Composable
+private fun PipelineProgressCard(
+    query: String,
+    stage: SearchPipelineStage
+) {
+    val activeStep = when (stage) {
+        SearchPipelineStage.AnalyzingIntent -> 1
+        SearchPipelineStage.FetchingStores -> 2
+        SearchPipelineStage.NeuralAndAiScoring -> 3
+        else -> 1
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 80.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
     ) {
-        item {
-            // Elegant brand comparator badge
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = Color(0xFFFFF1EE),
-                border = BorderStroke(1.dp, Color(0xFFFFD5CC)),
-                modifier = Modifier.padding(bottom = 12.dp)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 520.dp)
+                .testTag("pipeline_progress_card"),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(AliExpressRed)
-                    )
-                    Text(
-                        text = "AliExpress",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = AliExpressRed
-                    )
-                    Text(
-                        text = "⚔️",
-                        fontSize = 11.sp
-                    )
-                    Text(
-                        text = "Shopee",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = ShopeeOrange
-                    )
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(ShopeeOrange)
-                    )
-                }
-            }
-        }
-
-        item {
-            Text(
-                text = if (query.isEmpty()) "O que você deseja comparar hoje?" else "Nenhum produto encontrado para \"$query\"",
-                fontSize = 18.sp,
-                fontWeight = FontWeight.ExtraBold,
-                textAlign = TextAlign.Center,
-                color = Color(0xFF0F172A)
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = if (query.isEmpty())
-                    "Pesquise qualquer produto para ver preços reais, frete e estoque lado a lado nas duas plataformas."
-                else
-                    "Filtramos produtos divergentes para garantir precisão exata. Tente pesquisar com outros termos ou use as categorias abaixo.",
-                fontSize = 13.sp,
-                color = Color(0xFF64748B),
-                textAlign = TextAlign.Center,
-                lineHeight = 18.sp,
-                modifier = Modifier.padding(horizontal = 12.dp)
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-
-        if (query.isEmpty()) {
-            item {
-                // Voice search quick action
-                Surface(
-                    onClick = onVoiceSearchClick,
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                    shadowElevation = 1.dp,
-                    modifier = Modifier.testTag("empty_state_voice_search_button")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFFFFF1EE)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Mic,
-                                contentDescription = "Falar produto",
-                                tint = AliExpressRed,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(10.dp))
+                    key("stable_search_spinner") {
+                        StableSearchSpinner()
+                    }
+                    Column {
                         Text(
-                            text = "Falar nome do produto",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF0F172A)
+                            text = "Buscando \"$query\"",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Consultando lojas em tempo real",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        }
 
-        // Trending Categories section
-        item {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "🔥 Categorias Populares",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF1E293B),
-                    modifier = Modifier.padding(bottom = 10.dp)
-                )
-
-                // Grid of category chips
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    trendingCategories.forEach { (displayLabel, searchVal) ->
-                        Surface(
-                            onClick = { onCategoryClick(searchVal) },
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color.White,
-                            border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
-                            shadowElevation = 0.5.dp,
-                            modifier = Modifier.testTag("chip_trending_${searchVal.lowercase().replace(" ", "_")}")
-                        ) {
-                            Text(
-                                text = displayLabel,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF334155),
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(24.dp))
-        }
-
-        // How it works feature cards
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFFF8FAFC)
-                ),
-                border = BorderStroke(1.dp, Color(0xFFE2E8F0))
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFFFF1EE),
+                    border = BorderStroke(1.dp, AliExpressRed.copy(alpha = 0.30f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("waiting_highlight_banner")
                 ) {
                     Text(
-                        text = "Recursos do Comparador ScanShop",
-                        fontSize = 13.sp,
+                        text = stringResource(R.string.search_waiting_highlight),
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A)
+                        color = AliExpressRed,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp)
                     )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("⚡", fontSize = 16.sp)
-                        Column {
-                            Text(
-                                text = "Busca Simultânea em Tempo Real",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E293B)
-                            )
-                            Text(
-                                text = "Consulta preços e estoques oficiais no AliExpress e Shopee",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                    }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("📉", fontSize = 16.sp)
-                        Column {
-                            Text(
-                                text = "Alerta de Queda > 10% nos Favoritos",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color(0xFF1E293B)
-                            )
-                            Text(
-                                text = "Notificação no celular assim que o produto salvo sofrer redução",
-                                fontSize = 11.sp,
-                                color = Color(0xFF64748B)
-                            )
-                        }
-                    }
                 }
+
+                PipelineStepRow(
+                    stepNumber = 1,
+                    currentStep = activeStep,
+                    label = "Preparando consulta do produto"
+                )
+                PipelineStepRow(
+                    stepNumber = 2,
+                    currentStep = activeStep,
+                    label = "Consultando Mercado Livre, Shopee e AliExpress"
+                )
+                PipelineStepRow(
+                    stepNumber = 3,
+                    currentStep = activeStep,
+                    label = "Selecionando os melhores resultados"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PipelineStepRow(
+    stepNumber: Int,
+    currentStep: Int,
+    label: String
+) {
+    val done = currentStep > stepNumber
+    val active = currentStep == stepNumber
+    val targetBgColor = when {
+        done -> DealGreenBg
+        active -> Color(0xFFFFF1EE)
+        else -> Color(0xFFF8FAFC)
+    }
+    val targetTextColor = when {
+        done -> DealGreen
+        active -> AliExpressRed
+        else -> Color(0xFF94A3B8)
+    }
+    val bgColor by animateColorAsState(
+        targetValue = targetBgColor,
+        animationSpec = tween(durationMillis = 220),
+        label = "step_bg_$stepNumber"
+    )
+    val textColor by animateColorAsState(
+        targetValue = targetTextColor,
+        animationSpec = tween(durationMillis = 220),
+        label = "step_fg_$stepNumber"
+    )
+
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = bgColor,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = if (done) "OK" else "$stepNumber",
+                style = MaterialTheme.typography.labelSmall,
+                color = textColor
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.Medium,
+                color = textColor
+            )
+        }
+    }
+}
+
+@Composable
+private fun ErrorStateCard(message: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .widthIn(max = 520.dp),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, Color(0xFFFECACA))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SearchOff,
+                    contentDescription = null,
+                    tint = AliExpressRed,
+                    modifier = Modifier.size(34.dp)
+                )
+                Text(
+                    text = "Falha na consulta em tempo real",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CompletedSearchContent(
+    result: SearchSessionResult,
+    loadingMoreStores: Set<StoreType>,
+    storeHasMore: Map<StoreType, Boolean>,
+    favoriteIds: Set<String>,
+    onToggleFavorite: ((MatchedProduct) -> Unit)?,
+    onLoadMoreStore: (StoreType) -> Unit,
+    onRetryStore: (StoreType) -> Unit,
+    onOpenStore: (MatchedProduct) -> Unit,
+    onShare: (MatchedProduct) -> Unit
+) {
+    val orderedStores = remember {
+        listOf(StoreType.MERCADO_LIVRE, StoreType.SHOPEE, StoreType.ALIEXPRESS)
+    }
+    val reportsByStore = remember(result.storeReports) {
+        result.storeReports.associateBy { it.store }
+    }
+    val productsByStore = remember(result.products) {
+        result.products.groupBy { it.store }
+    }
+    val cleanQuery = result.intentProfile.searchQueriesPt.firstOrNull().orEmpty()
+        .ifBlank { result.intentProfile.rawQuery }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val targetSectionHeight = ((maxHeight - 28.dp) / 3f).coerceAtLeast(134.dp)
+        val targetCardHeight = (targetSectionHeight - 42.dp).coerceAtLeast(96.dp)
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("search_results_list"),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 3.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp)
+        ) {
+            items(
+                items = orderedStores,
+                key = { it.name }
+            ) { storeType ->
+                val report = reportsByStore[storeType] ?: StoreFetchReport(
+                    store = storeType,
+                    rawCandidatesCount = 0,
+                    approvedCount = 0
+                )
+                val storeProducts = productsByStore[storeType].orEmpty()
+                val storeLoadMore = remember(storeType, onLoadMoreStore) { { onLoadMoreStore(storeType) } }
+                val storeRetry = remember(storeType, onRetryStore) { { onRetryStore(storeType) } }
+                StoreSectionCard(
+                    store = storeType,
+                    report = report,
+                    products = storeProducts,
+                    emptyFallbackLabel = "Nenhuma oferta encontrada em ${storeType.displayName} para \"$cleanQuery\".",
+                    onOpenStore = onOpenStore,
+                    onShare = onShare,
+                    favoriteIds = favoriteIds,
+                    onToggleFavorite = onToggleFavorite,
+                    isLoadingMore = storeType in loadingMoreStores,
+                    hasMore = storeHasMore[storeType] ?: false,
+                    onLoadMore = storeLoadMore,
+                    onRetryStore = storeRetry,
+                    minSectionHeight = targetSectionHeight,
+                    cardHeight = targetCardHeight
+                )
             }
         }
     }

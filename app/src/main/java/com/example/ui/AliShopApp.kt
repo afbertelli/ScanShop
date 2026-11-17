@@ -4,14 +4,17 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,23 +24,18 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.ShoppingBag
-import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -47,7 +45,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -59,12 +56,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.ScanShopLogo
 import com.example.ui.screens.AboutScreen
-import com.example.ui.screens.DealsScreen
 import com.example.ui.screens.FavoritesScreen
+import com.example.ui.screens.PromoScreen
 import com.example.ui.screens.SearchScreen
 import com.example.ui.theme.AliExpressRed
 import com.example.ui.theme.DealGreen
-import com.example.ui.theme.DiscountBadge
 import com.example.ui.theme.ShopeeOrange
 import com.example.ui.viewmodel.AliShopViewModel
 
@@ -82,11 +78,9 @@ fun AliShopApp(
 ) {
     val selectedTab by viewModel.selectedTab.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
-    val dealsState by viewModel.dealsState.collectAsState()
+    val promoState by viewModel.promoState.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val favoriteIds by viewModel.favoriteIds.collectAsState()
-    val isCheckingPrices by viewModel.isCheckingPrices.collectAsState()
-    val priceCheckSummary by viewModel.priceCheckSummary.collectAsState()
 
     val navItems = listOf(
         BottomNavItem(
@@ -96,22 +90,16 @@ fun AliShopApp(
             testTag = "tab_busca"
         ),
         BottomNavItem(
-            label = "Ofertas",
-            selectedIcon = Icons.Filled.Bolt,
-            unselectedIcon = Icons.Outlined.Bolt,
-            testTag = "tab_ofertas"
+            label = "Promoções",
+            selectedIcon = Icons.Filled.LocalOffer,
+            unselectedIcon = Icons.Outlined.LocalOffer,
+            testTag = "tab_promocoes"
         ),
         BottomNavItem(
             label = "Favoritos",
             selectedIcon = Icons.Filled.Favorite,
             unselectedIcon = Icons.Outlined.FavoriteBorder,
             testTag = "tab_favoritos"
-        ),
-        BottomNavItem(
-            label = "Sobre",
-            selectedIcon = Icons.Filled.Info,
-            unselectedIcon = Icons.Outlined.Info,
-            testTag = "tab_sobre"
         )
     )
 
@@ -136,64 +124,67 @@ fun AliShopApp(
                 shadowElevation = 2.dp,
                 border = BorderStroke(0.5.dp, Color(0xFFE5E7EB))
             ) {
-                NavigationBar(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .height(50.dp)
                         .testTag("bottom_nav_bar"),
-                    containerColor = Color.White,
-                    tonalElevation = 0.dp
+                    horizontalArrangement = Arrangement.SpaceAround,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     navItems.forEachIndexed { index, item ->
                         val isSelected = selectedTab == index
-                        NavigationBarItem(
-                            selected = isSelected,
-                            onClick = { viewModel.selectTab(index) },
-                            modifier = Modifier.testTag(item.testTag),
-                            icon = {
-                                if (index == 2 && favorites.isNotEmpty()) {
-                                    BadgedBox(
-                                        badge = {
-                                            Badge(
-                                                containerColor = DiscountBadge,
-                                                contentColor = Color.White
-                                            ) {
-                                                Text(
-                                                    text = "${favorites.size}",
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
+                        val tintColor = if (isSelected) AliExpressRed else Color(0xFF64748B)
+
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable { viewModel.selectTab(index) }
+                                .testTag(item.testTag)
+                                .padding(vertical = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.CenterVertically)
+                        ) {
+                            if (index == 2 && favorites.isNotEmpty()) {
+                                BadgedBox(
+                                    badge = {
+                                        Badge(
+                                            containerColor = AliExpressRed,
+                                            contentColor = Color.White
+                                        ) {
+                                            Text(
+                                                text = if (favorites.size > 99) "99+" else favorites.size.toString(),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
-                                            contentDescription = item.label,
-                                            modifier = Modifier.size(24.dp)
-                                        )
                                     }
-                                } else {
+                                ) {
                                     Icon(
                                         imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
                                         contentDescription = item.label,
-                                        modifier = Modifier.size(24.dp)
+                                        tint = tintColor,
+                                        modifier = Modifier.size(19.dp)
                                     )
                                 }
-                            },
-                            label = {
-                                Text(
-                                    text = item.label,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            } else {
+                                Icon(
+                                    imageVector = if (isSelected) item.selectedIcon else item.unselectedIcon,
+                                    contentDescription = item.label,
+                                    tint = tintColor,
+                                    modifier = Modifier.size(19.dp)
                                 )
-                            },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = AliExpressRed,
-                                selectedTextColor = AliExpressRed,
-                                indicatorColor = Color(0xFFFFEDE8),
-                                unselectedIconColor = Color(0xFF64748B),
-                                unselectedTextColor = Color(0xFF64748B)
+                            }
+                            Text(
+                                text = item.label,
+                                fontSize = 10.5.sp,
+                                lineHeight = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = tintColor,
+                                maxLines = 1
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -207,32 +198,29 @@ fun AliShopApp(
             when (selectedTab) {
                 0 -> SearchScreen(
                     state = searchState,
-                    favoriteIds = favoriteIds,
                     onQueryChanged = viewModel::onQueryChanged,
                     onSearch = viewModel::performSearch,
-                    onFilterSelected = viewModel::setFilter,
-                    onToggleFavorite = viewModel::toggleFavorite,
-                    onToggleViewMode = viewModel::toggleViewMode
-                )
-                1 -> DealsScreen(
-                    state = dealsState,
                     favoriteIds = favoriteIds,
-                    onStoreFilterSelected = viewModel::setDealsStoreFilter,
                     onToggleFavorite = viewModel::toggleFavorite,
-                    onRefreshDeals = viewModel::refreshDeals
+                    onLoadMoreStore = viewModel::loadMoreSearchStore,
+                    onRetryStore = viewModel::retrySearchStore
+                )
+                1 -> PromoScreen(
+                    state = promoState,
+                    onRefresh = { viewModel.loadWeeklyPromos(forceRefresh = true) },
+                    favoriteIds = favoriteIds,
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onLoadMoreStore = viewModel::loadMorePromoStore,
+                    onRetryStore = viewModel::retryPromoStore
                 )
                 2 -> FavoritesScreen(
                     favorites = favorites,
-                    onRemoveFavorite = viewModel::removeFavorite,
-                    onNavigateToSearch = { viewModel.selectTab(0) },
-                    isCheckingPrices = isCheckingPrices,
-                    lastSummary = priceCheckSummary,
-                    onCheckPricesNow = viewModel::checkFavoritePrices,
-                    onSimulateDrop = viewModel::simulatePriceDrop
+                    onToggleFavorite = viewModel::toggleFavorite,
+                    onClearAll = viewModel::clearAllFavorites,
+                    onNavigateToSearch = { viewModel.selectTab(0) }
                 )
                 3 -> AboutScreen(
-                    onNavigateToSearch = { viewModel.selectTab(0) },
-                    onNavigateToDeals = { viewModel.selectTab(1) }
+                    onNavigateToSearch = { viewModel.selectTab(0) }
                 )
             }
         }
@@ -256,29 +244,26 @@ fun AliShopTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 9.dp),
+                .padding(start = 10.dp, top = 2.dp, end = 4.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Brand Logo & Name
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(9.dp)
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
             ) {
-                // Official ScanShop Brand Icon/Logo (Sacola com 'S' idêntica ao ícone)
                 ScanShopLogo(
-                    size = 38.dp,
+                    size = 28.dp,
                     modifier = Modifier.testTag("app_brand_logo")
                 )
 
-                // Brand Name
                 Text(
                     text = buildAnnotatedString {
                         withStyle(
                             style = SpanStyle(
                                 color = AliExpressRed,
                                 fontWeight = FontWeight.Black,
-                                fontSize = 21.sp
+                                fontSize = 17.sp
                             )
                         ) {
                             append("Scan")
@@ -287,7 +272,7 @@ fun AliShopTopBar(
                             style = SpanStyle(
                                 color = ShopeeOrange,
                                 fontWeight = FontWeight.Black,
-                                fontSize = 21.sp
+                                fontSize = 17.sp
                             )
                         ) {
                             append("Shop")
@@ -298,7 +283,6 @@ fun AliShopTopBar(
                 )
             }
 
-            // Right side: Real-time Comparator Badge + Info/About Button
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -314,7 +298,6 @@ fun AliShopTopBar(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Brand dots
                         Box(
                             modifier = Modifier
                                 .size(6.dp)
@@ -338,28 +321,33 @@ fun AliShopTopBar(
                     }
                 }
 
-                // TopBar Info/About Button
                 IconButton(
                     onClick = onOpenAbout,
                     modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(if (isAboutSelected) Color(0xFFFFEDE8) else Color(0xFFF8FAFC))
-                        .border(
-                            BorderStroke(
-                                0.5.dp,
-                                if (isAboutSelected) AliExpressRed.copy(alpha = 0.5f) else Color(0xFFE2E8F0)
-                            ),
-                            CircleShape
-                        )
+                        .size(48.dp)
                         .testTag("top_bar_about_button")
                 ) {
-                    Icon(
-                        imageVector = if (isAboutSelected) Icons.Filled.Info else Icons.Outlined.Info,
-                        contentDescription = "Sobre o Desenvolvedor e o App",
-                        tint = if (isAboutSelected) AliExpressRed else Color(0xFF64748B),
-                        modifier = Modifier.size(18.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(if (isAboutSelected) Color(0xFFFFEDE8) else Color(0xFFF8FAFC))
+                            .border(
+                                BorderStroke(
+                                    0.5.dp,
+                                    if (isAboutSelected) AliExpressRed.copy(alpha = 0.5f) else Color(0xFFE2E8F0)
+                                ),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isAboutSelected) Icons.Filled.Info else Icons.Outlined.Info,
+                            contentDescription = "Sobre o Desenvolvedor e o App",
+                            tint = if (isAboutSelected) AliExpressRed else Color(0xFF64748B),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

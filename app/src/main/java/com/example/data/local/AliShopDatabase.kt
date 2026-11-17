@@ -7,25 +7,27 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [FavoriteProductEntity::class],
-    version = 2,
+    version = 1,
     exportSchema = false
 )
 abstract class AliShopDatabase : RoomDatabase() {
+
     abstract fun favoriteDao(): FavoriteDao
 
     companion object {
         @Volatile
-        private var INSTANCE: AliShopDatabase? = null
+        private var instance: AliShopDatabase? = null
 
-        fun getDatabase(context: Context): AliShopDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+        fun getInstance(context: Context): AliShopDatabase {
+            return instance ?: synchronized(this) {
+                instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     AliShopDatabase::class.java,
                     "alishop_database"
-                ).fallbackToDestructiveMigration(true).build()
-                INSTANCE = instance
-                instance
+                )
+                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    .build()
+                    .also { instance = it }
             }
         }
     }

@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <queries>
+        <package android:name="com.mercadolibre" />
+        <package android:name="com.shopee.br" />
+        <package android:name="com.alibaba.aliexpresshd" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
@@ -17,7 +20,7 @@
     </queries>
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -28,7 +31,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="@string/app_name"
+            android:screenOrientation="portrait"
+            tools:ignore="LockedOrientationActivity"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

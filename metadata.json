@@ -1,6 +1,6 @@
 {
   "name": "ScanShop",
-  "description": "Comparador de preços AliExpress vs. Shopee com ofertas em tempo real e redirecionamento de afiliados",
+  "description": "Busca inteligente em tempo real com IA e Rede Neural no AliExpress, Shopee e Mercado Livre com redirecionamento de afiliados",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

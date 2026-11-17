@@ -19,44 +19,34 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Business
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Compare
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.ShoppingBag
-import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.ScanShopLogo
 import com.example.ui.theme.AliExpressRed
-import com.example.ui.theme.DealGreen
-import com.example.ui.theme.ShopeeOrange
 
 @Composable
 fun AboutScreen(
     onNavigateToSearch: () -> Unit,
-    onNavigateToDeals: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
@@ -67,7 +57,6 @@ fun AboutScreen(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // 1. Hero Brand Header
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -82,7 +71,6 @@ fun AboutScreen(
                         .padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // App Logo enlarged to 80.dp matching app icon
                     ScanShopLogo(
                         size = 80.dp,
                         modifier = Modifier.testTag("about_brand_logo")
@@ -100,7 +88,7 @@ fun AboutScreen(
                     Spacer(modifier = Modifier.height(4.dp))
 
                     Text(
-                        text = "Comparador Inteligente de Preços",
+                        text = "Busca em Tempo Real",
                         fontSize = 13.5.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = AliExpressRed
@@ -124,7 +112,6 @@ fun AboutScreen(
             }
         }
 
-        // 2. Developer & Company Information (Adimilson Fernando Bertelli Informatica ME)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -198,7 +185,6 @@ fun AboutScreen(
             }
         }
 
-        // 3. O que o ScanShop Faz (Resumo Geral)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -216,25 +202,24 @@ fun AboutScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     AboutFeatureItem(
-                        icon = Icons.Default.Compare,
-                        title = "Comparação Lado a Lado",
-                        description = "Compara preços reais em tempo real entre AliExpress e Shopee para você economizar sempre."
+                        icon = Icons.Default.Search,
+                        title = "100% Busca em Tempo Real",
+                        description = "Consultas diretas nas plataformas parceiras sem listas ou exemplos estáticos."
+                    )
+                    AboutFeatureItem(
+                        icon = Icons.Default.Psychology,
+                        title = "IA + Rede Neural de Assertividade",
+                        description = "Análise semântica e filtro de modelo exato para barrar acessórios e itens divergentes."
                     )
                     AboutFeatureItem(
                         icon = Icons.Default.Mic,
                         title = "Pesquisa por Voz",
-                        description = "Fale o nome do produto ou categoria para pesquisar com rapidez e praticidade sem precisar digitar."
-                    )
-                    AboutFeatureItem(
-                        icon = Icons.Default.ShoppingBag,
-                        title = "Histórico e Cupons",
-                        description = "Identifica automaticamente menor preço dos últimos 30 dias, descontos reais e cupons disponíveis."
+                        description = "Fale o que procura para iniciar a consulta sem precisar digitar."
                     )
                 }
             }
         }
 
-        // 4. INFORMAÇÕES CRÍTICAS DE SEGURANÇA E TRANSPARÊNCIA (Mandatório)
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -263,65 +248,37 @@ fun AboutScreen(
 
                     CriticalNoticeBullet(
                         title = "Nada é comprado dentro do nosso app",
-                        description = "O ScanShop é estritamente uma ferramenta de busca e comparação. Nenhuma transação financeira, pagamento ou cobrança ocorre dentro deste aplicativo."
+                        description = "O ScanShop é estritamente uma ferramenta de busca. Nenhuma transação financeira ou pagamento ocorre dentro deste aplicativo."
                     )
 
                     CriticalNoticeBullet(
                         title = "Redirecionamento Oficial e Seguro",
-                        description = "Ao clicar em \"Comprar\" ou ver oferta, você é redirecionado diretamente para os aplicativos oficiais ou sites seguros do AliExpress e da Shopee via links de afiliados autorizados."
+                        description = "Ao abrir uma oferta, você é redirecionado diretamente para os aplicativos ou sites oficiais das plataformas parceiras."
                     )
 
                     CriticalNoticeBullet(
                         title = "Privacidade e Proteção de Dados",
-                        description = "Não solicitamos, não coletamos e não armazenamos nenhum dado bancário, número de cartão de crédito, CPF de pagamento ou senhas. Seus favoritos são salvos de forma 100% privada e local no seu próprio aparelho."
-                    )
-
-                    CriticalNoticeBullet(
-                        title = "Entrega e Garantia",
-                        description = "Toda entrega, suporte, garantia de envio e processamento fiscal são de inteira responsabilidade das plataformas AliExpress e Shopee e de seus respectivos vendedores credenciados."
+                        description = "Não solicitamos nem armazenamos dados bancários, cartões ou senhas."
                     )
                 }
             }
         }
 
-        // 5. Botões de Ação Rápida
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Button(
+                onClick = onNavigateToSearch,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("about_go_search_button"),
+                shape = RoundedCornerShape(24.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = AliExpressRed)
             ) {
-                Button(
-                    onClick = onNavigateToSearch,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(46.dp)
-                        .testTag("about_go_search_button"),
-                    shape = RoundedCornerShape(23.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = AliExpressRed)
-                ) {
-                    Text(
-                        text = "Fazer Busca",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                }
-
-                OutlinedButton(
-                    onClick = onNavigateToDeals,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(46.dp)
-                        .testTag("about_go_deals_button"),
-                    shape = RoundedCornerShape(23.dp),
-                    border = BorderStroke(1.dp, ShopeeOrange),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ShopeeOrange)
-                ) {
-                    Text(
-                        text = "Ver Ofertas",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-                }
+                Text(
+                    text = "Ir para Busca",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
             }
         }
     }

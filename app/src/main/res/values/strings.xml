@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">ScanShop</string>
+    <string name="search_waiting_highlight">Por favor aguarde, excluindo produtos e vendedores ruins</string>
 </resources>

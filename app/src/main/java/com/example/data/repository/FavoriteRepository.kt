@@ -2,50 +2,29 @@ package com.example.data.repository
 
 import com.example.data.local.FavoriteDao
 import com.example.data.local.FavoriteProductEntity
-import com.example.data.model.Product
+import com.example.data.model.MatchedProduct
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
-class FavoriteRepository(private val favoriteDao: FavoriteDao) {
+class FavoriteRepository(
+    private val favoriteDao: FavoriteDao
+) {
+    val favorites: Flow<List<MatchedProduct>> = favoriteDao.observeFavorites()
+        .map { entities -> entities.map { it.toMatchedProduct() } }
 
-    val allFavorites: Flow<List<Product>> = favoriteDao.getAllFavorites().map { list ->
-        list.map { it.toProduct() }
-    }
-
-    val favoriteIds: Flow<Set<String>> = favoriteDao.getAllFavorites().map { list ->
-        list.map { it.id }.toSet()
-    }
-
-    val favoriteCount: Flow<Int> = favoriteDao.getFavoriteCount()
-
-    fun isFavorite(id: String): Flow<Boolean> = favoriteDao.isFavorite(id)
-
-    suspend fun addFavorite(product: Product) {
-        val entity = FavoriteProductEntity.fromProduct(product)
-        favoriteDao.insertFavorite(entity)
+    suspend fun toggleFavorite(product: MatchedProduct) {
+        if (favoriteDao.isFavorite(product.id)) {
+            favoriteDao.deleteById(product.id)
+        } else {
+            favoriteDao.upsertFavorite(FavoriteProductEntity.fromMatchedProduct(product))
+        }
     }
 
     suspend fun removeFavorite(productId: String) {
-        favoriteDao.deleteFavoriteById(productId)
+        favoriteDao.deleteById(productId)
     }
 
-    suspend fun getAllFavoritesList(): List<FavoriteProductEntity> {
-        return favoriteDao.getAllFavoritesList()
-    }
-
-    suspend fun getFavoriteById(id: String): FavoriteProductEntity? {
-        return favoriteDao.getFavoriteById(id)
-    }
-
-    suspend fun updatePriceDrop(id: String, newPrice: Double, dropPercent: Double, hasAlert: Boolean, timestamp: Long) {
-        favoriteDao.updatePriceDrop(id, newPrice, dropPercent, hasAlert, timestamp)
-    }
-
-    suspend fun toggleFavorite(product: Product, isCurrentlyFavorite: Boolean) {
-        if (isCurrentlyFavorite) {
-            removeFavorite(product.id)
-        } else {
-            addFavorite(product)
-        }
+    suspend fun clearAll() {
+        favoriteDao.deleteAll()
     }
 }
