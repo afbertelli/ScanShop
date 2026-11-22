@@ -99,11 +99,24 @@ class RealTimeSearchOrchestrator(
         val otherRawCandidates = (shopeeOutcome.candidates + aliOutcome.candidates)
             .distinctBy { it.id }
 
-        // Stage 3: Neural relevance filtering for Mercado Livre; Neural + AI verification for Shopee/AliExpress
+        // Stage 3: Neural relevance filtering + targeted rescue for Mercado Livre; Neural + AI verification for Shopee/AliExpress
         onStageChanged(SearchPipelineStage.NeuralAndAiScoring)
-        val mlApproved = filterAndScoreMercadoLivreCandidates(intentProfile, mlOutcome.candidates)
+        val mlApprovedRaw = filterAndScoreMercadoLivreCandidates(intentProfile, mlOutcome.candidates)
+        val mlRescuedDeferred = async {
+            if (mlApprovedRaw.isEmpty()) mlApprovedRaw
+            else sortMatchedMlProducts(
+                mercadoLivreClient.enrichApprovedMissingMediaAndPrices(
+                    mlApprovedRaw,
+                    queriesPt.firstOrNull().orEmpty().ifBlank { cleanRaw }
+                )
+            )
+        }
         val neuralScored = neuralMatcher.scoreAndFilter(intentProfile, otherRawCandidates)
         val aiOutcome = geminiEngine.verifyCandidates(intentProfile, neuralScored)
+        val mlRescuedRaw = mlRescuedDeferred.await()
+        val mlApproved = sortMatchedMlProducts(
+            backfillStillMissingMlPhotosFromVerifiedPeers(mlRescuedRaw, otherRawCandidates)
+        )
 
         val combinedMatches = mergeAndSortSearchResults(mlApproved, aiOutcome.matches)
         val approvedByStore = combinedMatches.groupBy { it.store }
@@ -200,7 +213,13 @@ class RealTimeSearchOrchestrator(
         if (candidates.isEmpty()) return@withContext currentSession
 
         if (store == StoreType.MERCADO_LIVRE) {
-            val mlApproved = filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, candidates)
+            val mlApproved = sortMatchedMlProducts(
+                mercadoLivreClient.enrichApprovedMissingMediaAndPrices(
+                    filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, candidates),
+                    currentSession.intentProfile.rawQuery,
+                    timeoutMs = 9_000L
+                )
+            )
             val updatedProducts = mergeAndSortSearchResults(
                 mlApproved,
                 currentSession.products.filter { it.store != StoreType.MERCADO_LIVRE }
@@ -380,8 +399,14 @@ class RealTimeSearchOrchestrator(
                 }
                 lastHasMore = outcome.hasMore
                 val freshCandidates = outcome.candidates.filter { it.id !in existingIds }
-                val pageProducts = filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, freshCandidates)
-                    .filter { existingIds.add(it.id) }
+                val pageProducts = sortMatchedMlProducts(
+                    mercadoLivreClient.enrichApprovedMissingMediaAndPrices(
+                        filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, freshCandidates)
+                            .filter { existingIds.add(it.id) },
+                        rawQuery,
+                        timeoutMs = 8_000L
+                    )
+                )
                 totalFresh += freshCandidates.size
                 collectedMl.addAll(pageProducts)
                 if (collectedMl.isNotEmpty() || !outcome.hasMore) break
@@ -672,8 +697,14 @@ class RealTimeSearchOrchestrator(
             }
 
             val verifiedPage = if (store == StoreType.MERCADO_LIVRE) {
-                filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, freshCandidates)
-                    .filter { it.id !in existingIds }
+                sortMatchedMlProducts(
+                    mercadoLivreClient.enrichApprovedMissingMediaAndPrices(
+                        filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, freshCandidates)
+                            .filter { it.id !in existingIds },
+                        rawQuery,
+                        timeoutMs = 8_000L
+                    )
+                )
             } else {
                 val scored = neuralMatcher.scoreAndFilter(currentSession.intentProfile, freshCandidates)
                 geminiEngine.verifyAdditionalCandidates(
@@ -761,7 +792,12 @@ class RealTimeSearchOrchestrator(
         }
 
         val approvedForStore: List<MatchedProduct> = if (store == StoreType.MERCADO_LIVRE) {
-            filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, outcome.candidates)
+            sortMatchedMlProducts(
+                mercadoLivreClient.enrichApprovedMissingMediaAndPrices(
+                    filterAndScoreMercadoLivreCandidates(currentSession.intentProfile, outcome.candidates),
+                    rawQuery
+                )
+            )
         } else {
             val scored = neuralMatcher.scoreAndFilter(currentSession.intentProfile, outcome.candidates)
             geminiEngine.verifyAdditionalCandidates(
@@ -812,42 +848,94 @@ class RealTimeSearchOrchestrator(
                 }
             }
 
-        return approvedScored
-            .map { s ->
-                val c = s.candidate
-                val verdict = if (s.breakdown.neuralProbability >= 0.65f) {
-                    MatchVerdict.EXACT_MATCH
-                } else {
-                    MatchVerdict.VARIANT_MATCH
+        return sortMatchedMlProducts(
+            approvedScored
+                .map { s ->
+                    val c = s.candidate
+                    val verdict = if (s.breakdown.neuralProbability >= 0.65f) {
+                        MatchVerdict.EXACT_MATCH
+                    } else {
+                        MatchVerdict.VARIANT_MATCH
+                    }
+                    val reason = if (s.breakdown.alphanumericModelScore >= 0.70f) {
+                        "Modelo e categoria validados no Mercado Livre."
+                    } else {
+                        "Correspondência validada no Mercado Livre."
+                    }
+                    MatchedProduct(
+                        id = c.id,
+                        store = c.store,
+                        title = c.title,
+                        imageUrl = c.imageUrl,
+                        productUrl = c.productUrl,
+                        affiliateUrl = c.affiliateUrl,
+                        deepLinkUrl = "",
+                        priceText = c.priceText,
+                        categoryLabel = c.categoryPath,
+                        matchedSpecs = c.attributes.take(3).map { "${it.name}: ${it.value}" },
+                        assertivenessScore = s.breakdown.neuralProbability,
+                        matchVerdict = verdict,
+                        matchReason = reason,
+                        featureBreakdown = s.breakdown
+                    )
                 }
-                val reason = if (s.breakdown.alphanumericModelScore >= 0.70f) {
-                    "Modelo e categoria validados no Mercado Livre."
-                } else {
-                    "Correspondência validada no Mercado Livre."
-                }
-                MatchedProduct(
-                    id = c.id,
-                    store = c.store,
-                    title = c.title,
-                    imageUrl = c.imageUrl,
-                    productUrl = c.productUrl,
-                    affiliateUrl = c.affiliateUrl,
-                    deepLinkUrl = "",
-                    priceText = c.priceText,
-                    categoryLabel = c.categoryPath,
-                    matchedSpecs = c.attributes.take(3).map { "${it.name}: ${it.value}" },
-                    assertivenessScore = s.breakdown.neuralProbability,
-                    matchVerdict = verdict,
-                    matchReason = reason,
-                    featureBreakdown = s.breakdown
+        )
+    }
+
+    internal fun backfillStillMissingMlPhotosFromVerifiedPeers(
+        mlProducts: List<MatchedProduct>,
+        peerCandidates: List<RawStoreCandidate>
+    ): List<MatchedProduct> {
+        if (mlProducts.isEmpty() || peerCandidates.isEmpty()) return mlProducts
+        if (mlProducts.none { it.imageUrl.isBlank() }) return mlProducts
+
+        val peerHits = peerCandidates.mapNotNull { peer ->
+            val cleanImg = HtmlTextDecoder.normalizeImageUrl(peer.imageUrl)
+            val cleanTitle = peer.title.trim()
+            if (cleanImg.startsWith("https://") && cleanTitle.length >= 6) {
+                com.example.data.network.SearchEngineImageHit(
+                    title = cleanTitle,
+                    pageUrl = "",
+                    imageUrl = cleanImg,
+                    thumbUrl = ""
                 )
+            } else {
+                null
             }
-            .sortedWith(
-                compareBy<MatchedProduct> { it.matchVerdict.ordinal }
-                    .thenByDescending { it.priceText.isNotBlank() && it.imageUrl.isNotBlank() }
-                    .thenByDescending { it.priceText.isNotBlank() }
-                    .thenByDescending { it.assertivenessScore }
+        }
+        if (peerHits.isEmpty()) return mlProducts
+
+        val missingRaw = mlProducts.map { p ->
+            RawStoreCandidate(
+                id = p.id,
+                store = p.store,
+                title = p.title,
+                imageUrl = p.imageUrl,
+                productUrl = p.productUrl,
+                affiliateUrl = p.affiliateUrl,
+                priceText = p.priceText,
+                categoryPath = p.categoryLabel
             )
+        }
+        val matched = com.example.data.network.MercadoLivreHtmlParser.applyImageHits(missingRaw, peerHits)
+        return mlProducts.mapIndexed { idx, prod ->
+            val patchedImg = matched.getOrNull(idx)?.imageUrl.orEmpty()
+            if (prod.imageUrl.isBlank() && patchedImg.isNotBlank()) {
+                prod.copy(imageUrl = patchedImg)
+            } else {
+                prod
+            }
+        }
+    }
+
+    internal fun sortMatchedMlProducts(products: List<MatchedProduct>): List<MatchedProduct> {
+        return products.sortedWith(
+            compareByDescending<MatchedProduct> { it.imageUrl.isNotBlank() && it.priceText.isNotBlank() }
+                .thenByDescending { it.imageUrl.isNotBlank() }
+                .thenBy { it.matchVerdict.ordinal }
+                .thenByDescending { it.priceText.isNotBlank() }
+                .thenByDescending { it.assertivenessScore }
+        )
     }
 
     private fun mergeAndSortSearchResults(

@@ -6,6 +6,7 @@ import com.example.data.model.PriceFormatter
 import com.example.data.model.RawStoreCandidate
 import com.example.data.model.StoreType
 import com.example.data.search.HtmlTextDecoder
+import com.example.data.search.NeuralProductMatcher
 import com.example.data.search.TextNormalizer
 import com.example.ui.util.DeepLinkUtils
 import org.json.JSONArray
@@ -258,9 +259,20 @@ internal object MercadoLivreHtmlParser {
         return raw.toDoubleOrNull() ?: 0.0
     }
 
+    private val mlPicIdPattern = Regex("""^(?:D_(?:N?Q_NP_|Q_NP_)?(?:\dX_)?)?\d{4,}-[A-Z]{2,4}\d*(?:_\d+)?$""", RegexOption.IGNORE_CASE)
+
     private fun isTrustedProductPhotoUrl(url: String): Boolean {
         val lower = url.lowercase()
         if (!lower.startsWith("https://")) return false
+        if (lower.contains("frontend-assets") ||
+            lower.contains("/badges/") ||
+            lower.contains("/banners/") ||
+            lower.contains("/org-img/") ||
+            lower.contains("meliplus") ||
+            lower.contains("full_icon")
+        ) {
+            return false
+        }
         return lower.contains("mlstatic.com/d_") ||
             lower.contains("mlstatic.com/s_") ||
             lower.contains("mm.bing.net/th") ||
@@ -275,7 +287,11 @@ internal object MercadoLivreHtmlParser {
         if (raw.startsWith("http", true) || raw.startsWith("//")) {
             return HtmlTextDecoder.normalizeImageUrl(raw)
         }
-        if (!raw.contains("ML", true) && !raw.startsWith("D_", true)) return ""
+        val looksLikeMlPicId = raw.contains("ML", true) ||
+            raw.contains("CBT", true) ||
+            raw.startsWith("D_", true) ||
+            mlPicIdPattern.matches(raw)
+        if (!looksLikeMlPicId) return ""
         val prefixAdded = if (raw.startsWith("D_", true)) raw else "D_NQ_NP_$raw"
         val lower = prefixAdded.lowercase()
         val withSuffix = when {
@@ -503,12 +519,16 @@ internal object MercadoLivreHtmlParser {
                 // Fast-path directly into ML's known result & promo arrays before full tree DFS
                 val priorityNodes = listOfNotNull(
                     root.optJSONObject("pageStoreState")?.optJSONObject("initialState")?.optJSONArray("results"),
+                    root.optJSONObject("pageStoreState")?.optJSONObject("initialState")?.optJSONObject("search")?.optJSONArray("results"),
                     root.optJSONObject("pageState")?.optJSONObject("initialState")?.optJSONArray("results"),
+                    root.optJSONObject("pageState")?.optJSONObject("initialState")?.optJSONObject("search")?.optJSONArray("results"),
                     root.optJSONObject("initialState")?.optJSONArray("results"),
+                    root.optJSONObject("initialState")?.optJSONObject("search")?.optJSONArray("results"),
                     root.optJSONObject("initialState")?.optJSONArray("items"),
                     root.optJSONObject("initialState")?.optJSONArray("sections"),
                     root.optJSONObject("props")?.optJSONObject("pageProps")?.optJSONArray("results"),
                     root.optJSONObject("props")?.optJSONObject("pageProps")?.optJSONArray("items"),
+                    root.optJSONObject("search")?.optJSONArray("results"),
                     root.optJSONArray("results"),
                     root.optJSONArray("items"),
                     root.optJSONArray("promotions")
@@ -738,6 +758,15 @@ internal object MercadoLivreHtmlParser {
         RegexOption.IGNORE_CASE
     )
 
+    private val priorityCardImgTagRegex = Regex(
+        """<(?:img|source)\b[^>]*(?:poly-component__picture|ui-search-result-image__element|promotion-item__img)[^>]*>""",
+        RegexOption.IGNORE_CASE
+    )
+    private val anyCardPictureSourceRegex = Regex(
+        """<picture[^>]*>([\s\S]{0,1200}?)</picture>""",
+        RegexOption.IGNORE_CASE
+    )
+
     internal fun extractFromCardBlocks(
         html: String,
         query: String,
@@ -777,26 +806,56 @@ internal object MercadoLivreHtmlParser {
             val title = sanitizeCandidateTitle(chosen.second, url)
             if (title.length < 6) continue
 
-            val mlStaticDirect = mlStaticCardDirectRegex
-                .findAll(cardHtml)
-                .map { HtmlTextDecoder.normalizeImageUrl(it.value) }
-                .firstOrNull { it.isNotBlank() && !it.contains("logo", true) }
+            val priorityPictureImg = anyCardPictureSourceRegex.find(cardHtml)?.groupValues?.getOrNull(1)
+                ?.let { picBlock ->
+                    cardImgAttrRegex.findAll(picBlock)
+                        .flatMap { m ->
+                            m.groupValues[1].split(',').asSequence().mapNotNull { entry ->
+                                val src = entry.trim().substringBefore(" ").trim()
+                                HtmlTextDecoder.normalizeImageUrl(src).takeIf {
+                                    it.contains("mlstatic.com", true) && isTrustedProductPhotoUrl(it)
+                                }
+                            }
+                        }
+                        .firstOrNull()
+                }
                 .orEmpty()
 
-            val imgFromAttr = if (mlStaticDirect.isBlank()) {
+            val priorityClassImg = if (priorityPictureImg.isBlank()) {
+                priorityCardImgTagRegex.findAll(cardHtml)
+                    .mapNotNull { m ->
+                        extractImgTagPhotoUrl(m.value).takeIf { it.contains("mlstatic.com", true) }
+                    }
+                    .firstOrNull()
+                    .orEmpty()
+            } else ""
+
+            val imgFromAttr = if (priorityPictureImg.isBlank() && priorityClassImg.isBlank()) {
                 cardImgAttrRegex.findAll(cardHtml)
                     .flatMap { m ->
                         m.groupValues[1].split(',').asSequence().mapNotNull { entry ->
                             val candidateSrc = entry.trim().substringBefore(" ").trim()
                             HtmlTextDecoder.normalizeImageUrl(candidateSrc).takeIf {
-                                it.isNotBlank() && it.contains("mlstatic.com", true) && !it.contains("logo", true)
+                                it.isNotBlank() && it.contains("mlstatic.com", true) && isTrustedProductPhotoUrl(it)
                             }
                         }
                     }
                     .firstOrNull()
                     .orEmpty()
             } else ""
-            val imageUrl = mlStaticDirect.ifBlank { imgFromAttr }
+
+            val mlStaticDirect = if (priorityPictureImg.isBlank() && priorityClassImg.isBlank() && imgFromAttr.isBlank()) {
+                mlStaticCardDirectRegex
+                    .findAll(cardHtml)
+                    .map { HtmlTextDecoder.normalizeImageUrl(it.value) }
+                    .firstOrNull { it.isNotBlank() && isTrustedProductPhotoUrl(it) }
+                    .orEmpty()
+            } else ""
+
+            val imageUrl = priorityPictureImg
+                .ifBlank { priorityClassImg }
+                .ifBlank { imgFromAttr }
+                .ifBlank { mlStaticDirect }
 
             val ariaPrice = cardAriaPriceRegex.find(cardHtml)?.groupValues?.getOrNull(1)
                 ?.let { extractBrlPrice(it) }.orEmpty()
@@ -835,7 +894,7 @@ internal object MercadoLivreHtmlParser {
     private val preloadLinkTagRegex = Regex("""<link[^>]+rel=["']preload["'][^>]*>""", RegexOption.IGNORE_CASE)
     private val hrefQuoteRegex = Regex("""href=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val pdpUiImgTagRegex = Regex("""<img[^>]*class=["'][^"']*ui-pdp-image[^"']*["'][^>]*>""", RegexOption.IGNORE_CASE)
-    private val imgZoomDataSrcRegex = Regex("""(?:data-zoom|data-src|src)=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    private val statePicturesKeyRegex = Regex(""""pictures"\s*:\s*\[""")
     private val statePicturesIdRegex = Regex(""""pictures"\s*:\s*\[\s*\{[^}]*"id"\s*:\s*"([^"]+)"""")
     private val stateThumbnailIdRegex = Regex(""""thumbnail_id"\s*:\s*"([^"]+)"""")
     private val metaItemPropImgForwardRegex = Regex("""<meta[^>]+itemprop=["']image["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
@@ -846,6 +905,9 @@ internal object MercadoLivreHtmlParser {
     )
     private val metaItemPropPriceForwardRegex = Regex("""<meta[^>]+itemprop=["']price["'][^>]*content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
     private val metaItemPropPriceReverseRegex = Regex("""<meta[^>]+content=["']([^"']+)["'][^>]*itemprop=["']price["']""", RegexOption.IGNORE_CASE)
+    private val jsonStateNestedPriceRegex = Regex(
+        """"(?:current_price|price_to_show|buy_box_winner|price)"\s*:\s*\{(?:[^{}]|\{[^{}]*\}){0,260}?"(?:value|amount|price)"\s*:\s*"?(\d+(?:\.\d{1,2})?)"?"""
+    )
     private val jsonStateObjPriceRegex = Regex(""""(?:current_price|sale_price|price)"\s*:\s*\{[^}]{0,180}?"(?:value|amount)"\s*:\s*"?(\d+(?:\.\d{1,2})?)"?""")
     private val jsonStateAmountPriceRegex = Regex(""""(?:price_amount|lowPrice)"\s*:\s*"?(\d+(?:\.\d{1,2})?)"?""")
     private val jsonStateSimplePriceRegex = Regex(""""price"\s*:\s*"?(\d+(?:\.\d{1,2})?)"?""")
@@ -855,9 +917,60 @@ internal object MercadoLivreHtmlParser {
         RegexOption.IGNORE_CASE
     )
     private val pdpAnyNonPrevRegex = Regex(
-        """andes-money-amount(?!--previous)[^>]*>[\s\S]{0,220}?andes-money-amount__fraction[^>]*>([^<]+)<(?:(?:(?!(?:andes-money-amount__fraction|installment|ui-pdp-price__subtitles))[\s\S]){0,140}?andes-money-amount__cents[^>]*>([^<]+)<)?""",
+        """<(?:span|div)[^>]*class=["'][^"']*andes-money-amount(?![^"']*--previous)[^"']*["'][^>]*>[\s\S]{0,220}?andes-money-amount__fraction[^>]*>([^<]+)<(?:(?:(?!(?:andes-money-amount__fraction|installment|ui-pdp-price__subtitles))[\s\S]){0,140}?andes-money-amount__cents[^>]*>([^<]+)<)?""",
         RegexOption.IGNORE_CASE
     )
+    private val pdpInstallmentContextRegex = Regex(
+        """(?:ui-pdp-price__subtitles|ui-pdp-price__installments|installment|parcel|\b\d{1,2}\s*x\b|andes-money-amount--previous|<s\b|<del\b)""",
+        RegexOption.IGNORE_CASE
+    )
+    private val pdpRelatedBoundaryMarkers = listOf(
+        "id=\"recommendations\"",
+        "class=\"ui-recommendations",
+        "ui-pdp-recommendations",
+        "Quem viu também comprou",
+        "Quem comprou, também comprou",
+        "Produtos relacionados",
+        "Mais anúncios do vendedor"
+    )
+
+    private fun extractPdpMainSectionHtml(html: String): String {
+        var earliestCut = html.length
+        for (marker in pdpRelatedBoundaryMarkers) {
+            val idx = html.indexOf(marker, startIndex = 0, ignoreCase = true)
+            if (idx in 120 until earliestCut) {
+                earliestCut = idx
+            }
+        }
+        return if (earliestCut < html.length) html.substring(0, earliestCut) else html
+    }
+
+    private fun extractPdpStateGalleryImage(html: String): String {
+        for (m in statePicturesKeyRegex.findAll(html)) {
+            val bracketIdx = html.indexOf('[', m.range.first)
+            if (bracketIdx < 0) continue
+            val slice = extractBalancedJsonBracket(html, bracketIdx, '[', ']', 24_000) ?: continue
+            val arr = runCatching { JSONArray(slice) }.getOrNull() ?: continue
+            for (i in 0 until arr.length()) {
+                val picObj = arr.optJSONObject(i) ?: continue
+                val rawUrl = picObj.optString("secure_url", "")
+                    .ifBlank { picObj.optString("url", "") }
+                    .ifBlank { buildMlStaticPicUrl(picObj.optString("id", "")) }
+                val clean = HtmlTextDecoder.normalizeImageUrl(rawUrl)
+                if (clean.contains("mlstatic.com", true) && isTrustedProductPhotoUrl(clean)) {
+                    return clean
+                }
+            }
+        }
+        val statePicId = statePicturesIdRegex
+            .find(html)?.groupValues?.getOrNull(1)
+            ?.ifBlank { null }
+            ?: stateThumbnailIdRegex.find(html)?.groupValues?.getOrNull(1)
+        val built = statePicId?.trim()?.takeIf { it.isNotBlank() }?.let { id ->
+            buildMlStaticPicUrl(id).ifBlank { "https://http2.mlstatic.com/D_NQ_NP_${id}-O.jpg" }
+        }.orEmpty()
+        return HtmlTextDecoder.normalizeImageUrl(built)
+    }
 
     fun parseSingleProductPageHtml(
         html: String,
@@ -866,11 +979,12 @@ internal object MercadoLivreHtmlParser {
         if (html.isBlank() || html.contains("account-verification", true)) {
             return Triple("", "", "")
         }
+        val mainSectionHtml = extractPdpMainSectionHtml(html)
 
         // 1) Title
         val ogTitle = cleanText(extractMetaContent(html, "og:title"))
             .ifBlank {
-                cleanText(pdpTitleH1Regex.find(html)?.groupValues?.getOrNull(1).orEmpty())
+                cleanText(pdpTitleH1Regex.find(mainSectionHtml)?.groupValues?.getOrNull(1).orEmpty())
             }
             .ifBlank {
                 cleanText(htmlTitleTagRegex.find(html)?.groupValues?.getOrNull(1).orEmpty())
@@ -917,7 +1031,7 @@ internal object MercadoLivreHtmlParser {
             }
         }
 
-        // 3) Image (mirrors Ofertas native mlstatic extraction: meta/LD+JSON/preload/DOM ui-pdp-image/embedded pictures/thumbnail_id)
+        // 3) Image (meta/LD+JSON/preload/DOM ui-pdp-image/embedded gallery pictures/bounded main-section mlstatic)
         val preloadTag = preloadLinkTagRegex
             .findAll(html)
             .map { it.value }
@@ -925,20 +1039,15 @@ internal object MercadoLivreHtmlParser {
             .orEmpty()
         val preloadImg = hrefQuoteRegex.find(preloadTag)?.groupValues?.getOrNull(1).orEmpty()
         val pdpDomImg = pdpUiImgTagRegex
-            .findAll(html)
+            .findAll(mainSectionHtml)
             .mapNotNull { m ->
-                val src = imgZoomDataSrcRegex.find(m.value)?.groupValues?.getOrNull(1).orEmpty()
-                HtmlTextDecoder.normalizeImageUrl(src).takeIf { it.contains("mlstatic.com", true) }
+                extractImgTagPhotoUrl(m.value).takeIf {
+                    it.contains("mlstatic.com", true) && isTrustedProductPhotoUrl(it)
+                }
             }
             .firstOrNull()
             .orEmpty()
-        val statePicId = statePicturesIdRegex
-            .find(html)?.groupValues?.getOrNull(1)
-            ?.ifBlank { null }
-            ?: stateThumbnailIdRegex.find(html)?.groupValues?.getOrNull(1)
-        val stateImgUrl = statePicId?.trim()?.takeIf { it.isNotBlank() }?.let {
-            buildMlStaticPicUrl(it).ifBlank { "https://http2.mlstatic.com/D_NQ_NP_${it}-O.jpg" }
-        }.orEmpty()
+        val stateImgUrl = extractPdpStateGalleryImage(html)
 
         val itemPropImg = metaItemPropImgForwardRegex.find(html)?.groupValues?.getOrNull(1)
             ?: metaItemPropImgReverseRegex.find(html)?.groupValues?.getOrNull(1).orEmpty()
@@ -951,14 +1060,14 @@ internal object MercadoLivreHtmlParser {
             .ifBlank { stateImgUrl }
             .ifBlank {
                 mlStaticPdpDirectRegex
-                    .findAll(html)
+                    .findAll(mainSectionHtml)
                     .map { HtmlTextDecoder.normalizeImageUrl(it.value) }
-                    .firstOrNull { it.isNotBlank() && !it.contains("logo", true) }
+                    .firstOrNull { it.isNotBlank() && isTrustedProductPhotoUrl(it) && !it.contains("logo", true) }
                     .orEmpty()
             }
         val safeImg = if (ogImg.contains("logo", true)) "" else ogImg
 
-        // 4) Price (prioritize explicit product meta/LD+JSON/pdp-second-line over previous or shipping price)
+        // 4) Price (prioritize explicit product meta/LD+JSON/pdp-second-line/nested JSON state over previous/installment/related)
         val itemPropPrice = metaItemPropPriceForwardRegex.find(html)?.groupValues?.getOrNull(1)
             ?: metaItemPropPriceReverseRegex.find(html)?.groupValues?.getOrNull(1).orEmpty()
         val metaPrice = PriceFormatter.formatBrl(
@@ -969,6 +1078,11 @@ internal object MercadoLivreHtmlParser {
         )
         val jsonStatePrice = run {
             val m = jsonStateObjPriceRegex.find(html)?.groupValues?.getOrNull(1)
+                ?: jsonStateNestedPriceRegex.findAll(html).mapNotNull { match ->
+                    val rawNum = match.groupValues[1]
+                    val v = rawNum.toDoubleOrNull()
+                    if (v != null && v >= 5.0 && v < 500_000.0) rawNum else null
+                }.firstOrNull()
                 ?: jsonStateAmountPriceRegex.find(html)?.groupValues?.getOrNull(1)
                 ?: jsonStateSimplePriceRegex
                     .findAll(html)
@@ -980,12 +1094,17 @@ internal object MercadoLivreHtmlParser {
                     .firstOrNull()
             PriceFormatter.formatBrl(m)
         }
-        val htmlWithoutChrome = html.replace(htmlChromeStripRegex, " ")
-        val pdpAriaPrice = pdpAriaPriceRegex.find(htmlWithoutChrome)?.groupValues?.getOrNull(1)
+        val mainWithoutChrome = mainSectionHtml.replace(htmlChromeStripRegex, " ")
+        val pdpAriaPrice = pdpAriaPriceRegex.find(mainWithoutChrome)?.groupValues?.getOrNull(1)
             ?.let { extractBrlPrice(it) }
             .orEmpty()
-        val mainPriceBlockMatch = pdpMainPriceBlockRegex.find(htmlWithoutChrome)
-        val anyNonPrevMatch = pdpAnyNonPrevRegex.find(htmlWithoutChrome)
+        val mainPriceBlockMatch = pdpMainPriceBlockRegex.find(mainWithoutChrome)
+        val anyNonPrevMatch = if (mainPriceBlockMatch == null) {
+            pdpAnyNonPrevRegex.findAll(mainWithoutChrome).firstOrNull { match ->
+                val beforeCtx = mainWithoutChrome.substring((match.range.first - 140).coerceAtLeast(0), match.range.first)
+                !pdpInstallmentContextRegex.containsMatchIn(beforeCtx)
+            }
+        } else null
         val domMatch = mainPriceBlockMatch ?: anyNonPrevMatch
         val domPrice = pdpAriaPrice.ifBlank {
             if (domMatch != null) {
@@ -995,7 +1114,7 @@ internal object MercadoLivreHtmlParser {
             } else ""
         }
 
-        val strippedVisibleText = htmlWithoutChrome.replace(htmlTagRegex, " ")
+        val strippedVisibleText = mainWithoutChrome.replace(htmlTagRegex, " ")
 
         val safePrice = metaPrice
             .ifBlank { ldPrice }
@@ -1098,10 +1217,7 @@ internal object MercadoLivreHtmlParser {
             }
             val mlImg = mlStaticStandardRegex
                 .find(block)?.value?.let { HtmlTextDecoder.normalizeImageUrl(it) }
-                ?: bingImgSrcRegex.findAll(block)
-                    .map { rawSrc -> normalizeBingOrRemoteThumbUrl(rawSrc.groupValues[1]) }
-                    .firstOrNull { img -> isTrustedProductPhotoUrl(img) }
-                    .orEmpty()
+                ?: extractCompatibleSnippetImg(block, title)
 
             mergeCandidate(
                 out,
@@ -1231,23 +1347,23 @@ internal object MercadoLivreHtmlParser {
                 val tag = m.value
                 val fullSrc = extractImgTagPhotoUrl(tag)
                 if (fullSrc.isBlank()) continue
-                val nearWindow = html.substring(
-                    (m.range.first - 600).coerceAtLeast(0),
-                    (m.range.last + 350).coerceAtMost(html.length)
-                )
-                val tileSlice = html.substring(
-                    html.lastIndexOf("<li", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
-                        ?: html.lastIndexOf("class=\"iuscp", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
-                        ?: (m.range.first - 250).coerceAtLeast(0),
-                    (m.range.last + 250).coerceAtMost(html.length)
-                )
+                val tileStart = html.lastIndexOf("<li", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
+                    ?: html.lastIndexOf("class=\"iuscp", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
+                    ?: (m.range.first - 250).coerceAtLeast(0)
+                val nextLi = html.indexOf("<li", m.range.last + 1).takeIf { it > m.range.last && it - m.range.last < 450 }
+                val closeLi = html.indexOf("</li>", m.range.last + 1).takeIf { it > m.range.last && it - m.range.last < 450 }
+                val nextIuscp = html.indexOf("class=\"iuscp", m.range.last + 1).takeIf { it > m.range.last && it - m.range.last < 450 }
+                val tileEnd = listOfNotNull(nextLi, closeLi, nextIuscp)
+                    .minOrNull()
+                    ?: (m.range.last + 250).coerceAtMost(html.length)
+                val tileSlice = html.substring(tileStart, tileEnd.coerceAtLeast(m.range.last + 1))
                 val tileCaption = containerCaptionRegex.find(tileSlice)?.let { cap ->
                     cap.groupValues[1].ifBlank { cap.groupValues[2] }
                 }.orEmpty()
                 val rawAlt = cleanText(altAttrAllRegex.find(tag)?.groupValues?.getOrNull(1).orEmpty())
                     .ifBlank { cleanText(tileCaption) }
                 val cleanAlt = rawAlt.replace(stripResultPrefixRegex, "").trim()
-                val nearMlUrl = extractNearbyMlPageUrl(nearWindow)
+                val nearMlUrl = extractNearbyMlPageUrl(tileSlice)
                 val altTokens = TextNormalizer.tokenize(cleanAlt).filter { it.length >= 2 }
                 if (altTokens.size < 2) {
                     continue
@@ -1256,6 +1372,28 @@ internal object MercadoLivreHtmlParser {
             }
         }
         return hits
+    }
+
+    private fun extractBoundedTileWindow(
+        html: String,
+        matchRange: IntRange,
+        maxBefore: Int,
+        maxAfter: Int,
+        boundaryMarkers: List<String>
+    ): String {
+        var start = (matchRange.first - maxBefore).coerceAtLeast(0)
+        var end = (matchRange.last + 1 + maxAfter).coerceAtMost(html.length)
+        for (marker in boundaryMarkers) {
+            val prevIdx = html.lastIndexOf(marker, (matchRange.first - 1).coerceAtLeast(0), ignoreCase = true)
+            if (prevIdx >= start) {
+                start = (prevIdx + marker.length).coerceAtMost(matchRange.first)
+            }
+            val nextIdx = html.indexOf(marker, (matchRange.last + 1).coerceAtMost(html.length), ignoreCase = true)
+            if (nextIdx in (matchRange.last + 1) until end) {
+                end = nextIdx
+            }
+        }
+        return html.substring(start.coerceAtMost(matchRange.first), end.coerceAtLeast(matchRange.last + 1))
     }
 
     fun parseYahooImagesHtml(html: String): List<SearchEngineImageHit> {
@@ -1275,10 +1413,21 @@ internal object MercadoLivreHtmlParser {
             }
             val clean = HtmlTextDecoder.normalizeImageUrl(raw)
             if (clean.startsWith("https://") && seenUrls.add(clean)) {
-                val window = html.substring(
-                    (m.range.first - 650).coerceAtLeast(0),
-                    (m.range.last + 650).coerceAtMost(html.length)
-                )
+                val liStart = html.lastIndexOf("<li", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
+                val liEnd = html.indexOf("</li>", m.range.last).takeIf { it > m.range.last && it - m.range.last < 900 }
+                val aStart = html.lastIndexOf("<a", m.range.first).takeIf { it >= 0 && m.range.first - it < 450 }
+                val aEnd = html.indexOf("</a>", m.range.last).takeIf { it > m.range.last && it - m.range.last < 450 }
+                val window = when {
+                    aStart != null && aEnd != null -> html.substring(aStart, aEnd + 4)
+                    liStart != null && liEnd != null -> html.substring(liStart, liEnd)
+                    else -> extractBoundedTileWindow(
+                        html = html,
+                        matchRange = m.range,
+                        maxBefore = 280,
+                        maxAfter = 340,
+                        boundaryMarkers = listOf("imgurl=", "murl=", "<li", "</li>")
+                    )
+                }
                 val rawRurl = rurlPurlRegex.find(window)?.groupValues?.getOrNull(1).orEmpty()
                 val decodedRurl = runCatching { URLDecoder.decode(rawRurl, "UTF-8") }.getOrNull().orEmpty()
                 val rawPageUrl = if (decodedRurl.contains("mercadolivre", true)) {
@@ -1291,7 +1440,7 @@ internal object MercadoLivreHtmlParser {
                 val nearAlt = altAttrAllRegex.find(window)?.groupValues?.getOrNull(1).orEmpty()
                 val nearTitle = cleanText(decodedTit)
                     .ifBlank { cleanText(nearAlt) }
-                    .ifBlank { if (clean.contains("mlstatic.com", true)) deriveTitleFromUrl(rawPageUrl) else "" }
+                    .ifBlank { if (clean.contains("mlstatic.com", true) && decodedRurl.contains("mercadolivre", true)) deriveTitleFromUrl(rawPageUrl) else "" }
                 hits.add(SearchEngineImageHit(title = nearTitle, pageUrl = rawPageUrl, imageUrl = clean, thumbUrl = ""))
             }
         }
@@ -1301,8 +1450,8 @@ internal object MercadoLivreHtmlParser {
             val tag = m.value
             val cleanSrc = extractImgTagPhotoUrl(tag)
             if (cleanSrc.isBlank() || !seenUrls.add(cleanSrc)) continue
-            val liStart = html.lastIndexOf("<li", m.range.first).takeIf { it >= 0 && m.range.first - it < 1000 }
-            val liEnd = html.indexOf("</li>", m.range.last).takeIf { it > m.range.last && it - m.range.last < 1000 }
+            val liStart = html.lastIndexOf("<li", m.range.first).takeIf { it >= 0 && m.range.first - it < 900 }
+            val liEnd = html.indexOf("</li>", m.range.last).takeIf { it > m.range.last && it - m.range.last < 900 }
             val tileSlice = if (liStart != null && liEnd != null) html.substring(liStart, liEnd) else ""
             val tileAria = if (tileSlice.isNotBlank()) {
                 ariaLabelBoundedRegex.find(tileSlice)?.groupValues?.getOrNull(1).orEmpty()
@@ -1314,11 +1463,16 @@ internal object MercadoLivreHtmlParser {
             } else ""
             val alt = cleanText(altAttrAllRegex.find(tag)?.groupValues?.getOrNull(1).orEmpty())
                 .ifBlank { cleanText(tileAria) }
-            val nearWindow = html.substring(
-                (m.range.first - 450).coerceAtLeast(0),
-                (m.range.last + 250).coerceAtMost(html.length)
-            )
-            val nearMlUrl = extractNearbyMlPageUrl(nearWindow)
+            val boundedWindow = tileSlice.ifBlank {
+                extractBoundedTileWindow(
+                    html = html,
+                    matchRange = m.range,
+                    maxBefore = 240,
+                    maxAfter = 180,
+                    boundaryMarkers = listOf("<img", "<li", "</li>")
+                )
+            }
+            val nearMlUrl = extractNearbyMlPageUrl(boundedWindow)
             hits.add(
                 SearchEngineImageHit(
                     title = alt,
@@ -1340,13 +1494,27 @@ internal object MercadoLivreHtmlParser {
             if (hits.size >= 35) break
             val clean = HtmlTextDecoder.normalizeImageUrl(m.value)
             if (clean.startsWith("https://") && seen.add(clean)) {
-                val window = html.substring(
-                    (m.range.first - 750).coerceAtLeast(0),
-                    (m.range.last + 750).coerceAtMost(html.length)
+                val window = extractBoundedTileWindow(
+                    html = html,
+                    matchRange = m.range,
+                    maxBefore = 320,
+                    maxAfter = 320,
+                    boundaryMarkers = listOf("mlstatic.com/D_", "encrypted-tbn", "<li", "</li>")
                 )
+                val imgTagStart = html.lastIndexOf("<img", m.range.first).takeIf { it >= 0 && m.range.first - it < 220 }
+                val imgTagEnd = imgTagStart?.let { s ->
+                    html.indexOf('>', m.range.last).takeIf { it > m.range.last && it - s < 500 }
+                }
+                val enclosingImgTag = if (imgTagStart != null && imgTagEnd != null) {
+                    html.substring(imgTagStart, imgTagEnd + 1)
+                } else ""
                 val mlPageUrl = extractNearbyMlPageUrl(window)
-                val nearAlt = altAttrAllRegex.find(window)?.groupValues?.getOrNull(1).orEmpty()
-                val nearTitle = cleanText(nearAlt).ifBlank { deriveTitleFromUrl(mlPageUrl) }
+                val tagAlt = if (enclosingImgTag.isNotBlank()) {
+                    altAttrAllRegex.find(enclosingImgTag)?.groupValues?.getOrNull(1).orEmpty()
+                } else {
+                    altAttrAllRegex.find(window)?.groupValues?.getOrNull(1).orEmpty()
+                }
+                val nearTitle = cleanText(tagAlt)
                 hits.add(SearchEngineImageHit(title = nearTitle, pageUrl = mlPageUrl, imageUrl = clean, thumbUrl = ""))
             }
         }
@@ -1361,9 +1529,12 @@ internal object MercadoLivreHtmlParser {
                 .findAll(wrapperBefore).lastOrNull()?.groupValues?.getOrNull(1).orEmpty()
             val alt = cleanText(altAttrAllRegex.find(tag)?.groupValues?.getOrNull(1).orEmpty())
                 .ifBlank { cleanText(wrapperAria) }
-            val nearWindow = html.substring(
-                (m.range.first - 500).coerceAtLeast(0),
-                (m.range.last + 500).coerceAtMost(html.length)
+            val nearWindow = extractBoundedTileWindow(
+                html = html,
+                matchRange = m.range,
+                maxBefore = 280,
+                maxAfter = 240,
+                boundaryMarkers = listOf("<img", "<li", "</li>")
             )
             val nearMlUrl = extractNearbyMlPageUrl(nearWindow)
             hits.add(
@@ -1382,9 +1553,12 @@ internal object MercadoLivreHtmlParser {
                 if (hits.size >= 45) break
                 val clean = HtmlTextDecoder.normalizeImageUrl(m.value)
                 if (clean.startsWith("https://") && seen.add(clean)) {
-                    val window = html.substring(
-                        (m.range.first - 500).coerceAtLeast(0),
-                        (m.range.last + 500).coerceAtMost(html.length)
+                    val window = extractBoundedTileWindow(
+                        html = html,
+                        matchRange = m.range,
+                        maxBefore = 300,
+                        maxAfter = 260,
+                        boundaryMarkers = listOf("encrypted-tbn", "mlstatic.com/D_")
                     )
                     val mlPageUrl = extractNearbyMlPageUrl(window)
                     val nearAlt = altAttrAllRegex.find(window)?.groupValues?.getOrNull(1).orEmpty()
@@ -1446,9 +1620,22 @@ internal object MercadoLivreHtmlParser {
 
     private val ambiguousPhotoWords = setOf(
         "kit", "para", "com", "sem", "novo", "nova", "original",
-        "preto", "branco", "preta", "branca", "capa", "suporte", "cabo", "fonte",
-        "caixa", "peca", "item", "produto"
+        "preto", "branco", "preta", "branca", "azul", "vermelho", "cinza", "prata", "verde",
+        "capa", "capinha", "suporte", "cabo", "fonte",
+        "placa", "placas",
+        "caixa", "peca", "item", "produto", "oferta", "barato", "promo"
     )
+    private val accessoryTrapWords = setOf(
+        "capa", "capinha", "pelicula", "suporte", "cabo", "carregador", "adaptador",
+        "controle", "case", "bolsa", "mochila", "bateria", "adesivo", "protetor",
+        "carcaca", "tampa", "dobradica", "peca", "sucata"
+    )
+    private val genericTechSpecCodes = setOf(
+        "ddr3", "ddr4", "ddr5", "v2", "v3", "v4", "v5", "lga", "2011", "lga2011", "2011v3", "lga2011v3", "20113",
+        "m2", "sata3", "pcie3", "pcie4", "usb30", "usb20", "e5", "20", "30", "10", "1000",
+        "4k", "5g", "4g", "110v", "220v", "usb2", "usb3", "usb", "2x", "x99", "x79", "am4", "am5"
+    )
+    private val capacityPhotoTokenRegex = Regex("""^\d+(?:gb|tb|mah|w|hz|l|ml|pol)$""")
 
     private class PreparedImageHit(
         val hit: SearchEngineImageHit,
@@ -1457,36 +1644,203 @@ internal object MercadoLivreHtmlParser {
         val isMlCdnPhoto: Boolean,
         val isMlPage: Boolean,
         val isTrustedPhoto: Boolean,
-        val hitTokens: Set<String>
+        val hitTokens: Set<String>,
+        val hitNormTextWithUrl: String,
+        val isSafeForMotherboard: Boolean
     )
 
-    private fun scorePreparedImageHit(
+    internal fun hasMotherboardPhotoSignals(tokens: Set<String>, normText: String): Boolean {
+        return normText.contains("placa mae") ||
+            normText.contains("motherboard") ||
+            normText.contains("mainboard") ||
+            tokens.any { it in NeuralProductMatcher.MOTHERBOARD_HARDWARE_TOKENS }
+    }
+
+    internal fun hasAutomotiveOrNonMotherboardPhotoSignals(tokens: Set<String>, normText: String): Boolean {
+        return tokens.any { it in NeuralProductMatcher.AUTOMOTIVE_AND_PLATE_CONFLICT_TOKENS } ||
+            NeuralProductMatcher.NON_MOTHERBOARD_PLACA_PHRASES.any { normText.contains(it) }
+    }
+
+    internal fun isSafeMotherboardImageHit(hit: SearchEngineImageHit): Boolean {
+        val rawTitle = hit.title.trim()
+        if (rawTitle.isBlank()) return false
+        val normTitle = TextNormalizer.normalize(rawTitle)
+        val titleTokens = TextNormalizer.tokenize(normTitle, dropStopWords = false).toSet()
+        val normCombined = "$normTitle ${TextNormalizer.normalize(hit.pageUrl)}".trim()
+        val combinedTokens = TextNormalizer.tokenize(normCombined, dropStopWords = false).toSet()
+        if (hasAutomotiveOrNonMotherboardPhotoSignals(combinedTokens, normCombined)) return false
+        return hasMotherboardPhotoSignals(titleTokens, normTitle)
+    }
+
+    private fun isSnippetImgCompatibleWithTitle(imgTag: String, candidateTitle: String): Boolean {
+        val normCand = TextNormalizer.normalize(candidateTitle)
+        val candTokens = TextNormalizer.tokenize(normCand, dropStopWords = false).toSet()
+        if (!hasMotherboardPhotoSignals(candTokens, normCand)) return true
+        val alt = cleanText(altAttrAllRegex.find(imgTag)?.groupValues?.getOrNull(1).orEmpty())
+        if (alt.isBlank()) return true
+        val normAlt = TextNormalizer.normalize(alt)
+        val altTokens = TextNormalizer.tokenize(normAlt, dropStopWords = false).toSet()
+        if (hasAutomotiveOrNonMotherboardPhotoSignals(altTokens, normAlt)) return false
+        if (("placa" in altTokens || "placas" in altTokens) && !hasMotherboardPhotoSignals(altTokens, normAlt)) {
+            return false
+        }
+        return true
+    }
+
+    private fun extractCompatibleSnippetImg(blockHtml: String, candidateTitle: String, mlStaticPreferredOnly: Boolean = false): String {
+        val matchedTags = imgTagRegex.findAll(blockHtml).toList()
+        if (matchedTags.isNotEmpty()) {
+            val urls = matchedTags.mapNotNull { m ->
+                val tag = m.value
+                if (!isSnippetImgCompatibleWithTitle(tag, candidateTitle)) return@mapNotNull null
+                val rawSrc = bingImgSrcRegex.find(tag)?.groupValues?.getOrNull(1).orEmpty()
+                val normalized = normalizeBingOrRemoteThumbUrl(rawSrc)
+                normalized.takeIf { isTrustedProductPhotoUrl(it) }
+            }
+            val mlFirst = urls.firstOrNull { it.contains("mlstatic.com", true) }
+            if (!mlFirst.isNullOrBlank()) return mlFirst
+            if (!mlStaticPreferredOnly) {
+                return urls.firstOrNull().orEmpty()
+            }
+            return ""
+        }
+        if (mlStaticPreferredOnly) return ""
+        return bingImgSrcRegex.findAll(blockHtml)
+            .map { rawSrc -> normalizeBingOrRemoteThumbUrl(rawSrc.groupValues[1]) }
+            .firstOrNull { img -> isTrustedProductPhotoUrl(img) }
+            .orEmpty()
+    }
+
+    private fun isByIdHitCompatible(
         candTokens: Set<String>,
-        prepared: PreparedImageHit
+        candNormText: String,
+        hit: SearchEngineImageHit,
+        hitNormTextWithUrl: String
+    ): Boolean {
+        val candIsMotherboard = hasMotherboardPhotoSignals(candTokens, candNormText)
+        val hitAllTokens = TextNormalizer.tokenize(hitNormTextWithUrl, dropStopWords = false).toSet()
+        val hitHasAutoConflict = hasAutomotiveOrNonMotherboardPhotoSignals(hitAllTokens, hitNormTextWithUrl)
+        if (candIsMotherboard) {
+            if (hitHasAutoConflict) return false
+            // Never accept an unlabeled or non-motherboard search-engine hit for a motherboard even when pageMlbId matches
+            if (!isSafeMotherboardImageHit(hit)) return false
+        } else if (hasAutomotiveOrNonMotherboardPhotoSignals(candTokens, candNormText) &&
+            hasMotherboardPhotoSignals(hitAllTokens, hitNormTextWithUrl)
+        ) {
+            return false
+        }
+        if (hit.title.isNotBlank()) {
+            val hitTitleTokens = TextNormalizer.tokenize(hit.title).filter { it.length >= 2 }.toSet()
+            val candAcc = candTokens.intersect(accessoryTrapWords)
+            val hitAcc = hitTitleTokens.intersect(accessoryTrapWords)
+            if ((candAcc.isEmpty() && hitAcc.isNotEmpty()) || (candAcc.isNotEmpty() && hitAcc.isEmpty())) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private fun computeCompatiblePhotoScore(
+        candTokens: Set<String>,
+        candNormText: String,
+        hitTokens: Set<String>,
+        hitNormTextWithUrl: String,
+        isMlCdnPhoto: Boolean,
+        isMlPage: Boolean,
+        isTrustedPhoto: Boolean,
+        isSafeForMotherboard: Boolean
     ): Double {
-        if (candTokens.isEmpty() || prepared.hitTokens.isEmpty()) return -1.0
+        if (candTokens.isEmpty() || hitTokens.isEmpty()) return -1.0
+
+        // Guard 1: Accessory vs Main Product mismatch (never put a case/cable/mount photo on a main product or vice-versa)
+        val candAcc = candTokens.intersect(accessoryTrapWords)
+        val hitAcc = hitTokens.intersect(accessoryTrapWords)
+        if ((candAcc.isEmpty() && hitAcc.isNotEmpty()) || (candAcc.isNotEmpty() && hitAcc.isEmpty())) {
+            return -1.0
+        }
+
+        // Guard 2: Capacity mismatch when both specify capacities (e.g. 256GB vs 128GB, 1TB vs 240GB)
+        val candCaps = candTokens.filter { capacityPhotoTokenRegex.matches(it) }.toSet()
+        val hitCaps = hitTokens.filter { capacityPhotoTokenRegex.matches(it) }.toSet()
+        if (candCaps.isNotEmpty() && hitCaps.isNotEmpty() && candCaps.none { it in hitCaps }) {
+            return -1.0
+        }
+
+        // Guard 3: Specific alphanumeric model code conflict (e.g. S24 vs A15, PR9 vs QD4, 2680 vs 2670)
+        val candSpecificCodes = candTokens.filter { tok ->
+            tok.any(Char::isDigit) && tok !in genericTechSpecCodes && !capacityPhotoTokenRegex.matches(tok)
+        }.toSet()
+        val hitSpecificCodes = hitTokens.filter { tok ->
+            tok.any(Char::isDigit) && tok !in genericTechSpecCodes && !capacityPhotoTokenRegex.matches(tok)
+        }.toSet()
+        val sharedSpecificCodes = candSpecificCodes.intersect(hitSpecificCodes)
+        if (candSpecificCodes.isNotEmpty() && hitSpecificCodes.isNotEmpty() && sharedSpecificCodes.isEmpty()) {
+            return -1.0
+        }
+
+        // Guard 4: Motherboard vs Car License Plate / Automotive / Non-motherboard 'placa' conflict
+        val candIsMotherboard = hasMotherboardPhotoSignals(candTokens, candNormText)
+        val hitAllTokens = TextNormalizer.tokenize(hitNormTextWithUrl, dropStopWords = false).toSet()
+        val hitHasAutoConflict = hasAutomotiveOrNonMotherboardPhotoSignals(hitAllTokens, hitNormTextWithUrl)
+        if (candIsMotherboard) {
+            if (hitHasAutoConflict || !isSafeForMotherboard) return -1.0
+            if (("placa" in hitAllTokens || "placas" in hitAllTokens) &&
+                !hasMotherboardPhotoSignals(hitAllTokens, hitNormTextWithUrl)
+            ) {
+                return -1.0
+            }
+        } else if (hasAutomotiveOrNonMotherboardPhotoSignals(candTokens, candNormText) &&
+            hasMotherboardPhotoSignals(hitAllTokens, hitNormTextWithUrl)
+        ) {
+            return -1.0
+        }
+
         var commonCount = 0
-        var hasMeaningfulMatch = false
+        var meaningfulCommon = 0
         for (tok in candTokens) {
-            if (tok in prepared.hitTokens) {
+            if (tok in hitTokens) {
                 commonCount++
-                if (tok !in ambiguousPhotoWords || tok.any { it.isDigit() }) {
-                    hasMeaningfulMatch = true
+                if (tok !in ambiguousPhotoWords || tok.any(Char::isDigit)) {
+                    meaningfulCommon++
                 }
             }
         }
-        if (commonCount == 0) return -1.0
-        if (!hasMeaningfulMatch && commonCount < 2) return -1.0
-        val unionSize = candTokens.size + prepared.hitTokens.size - commonCount
+        if (commonCount < 2 || meaningfulCommon < 1) return -1.0
+        if (meaningfulCommon < 2 && sharedSpecificCodes.isEmpty()) return -1.0
+
+        val minSize = minOf(candTokens.size, hitTokens.size).coerceAtLeast(1)
+        val unionSize = (candTokens.size + hitTokens.size - commonCount).coerceAtLeast(1)
+        val containment = commonCount.toDouble() / minSize.toDouble()
         val jaccard = commonCount.toDouble() / unionSize.toDouble()
+
+        val passesThreshold = (sharedSpecificCodes.isNotEmpty() && containment >= 0.40) ||
+            (containment >= 0.50 && (jaccard >= 0.22 || meaningfulCommon >= 3))
+        if (!passesThreshold) return -1.0
+
         val bonus = when {
-            prepared.isMlCdnPhoto -> 0.35
-            prepared.isMlPage -> 0.20
-            prepared.isTrustedPhoto -> 0.08
+            isMlCdnPhoto -> 0.25
+            isMlPage -> 0.15
+            isTrustedPhoto -> 0.06
             else -> 0.0
         }
-        return jaccard + bonus
+        val modelBonus = if (sharedSpecificCodes.isNotEmpty()) 0.12 else 0.0
+        return 0.55 * containment + 0.45 * jaccard + bonus + modelBonus
     }
+
+    private fun scorePreparedImageHit(
+        candTokens: Set<String>,
+        candNormText: String,
+        prepared: PreparedImageHit
+    ): Double = computeCompatiblePhotoScore(
+        candTokens = candTokens,
+        candNormText = candNormText,
+        hitTokens = prepared.hitTokens,
+        hitNormTextWithUrl = prepared.hitNormTextWithUrl,
+        isMlCdnPhoto = prepared.isMlCdnPhoto,
+        isMlPage = prepared.isMlPage,
+        isTrustedPhoto = prepared.isTrustedPhoto,
+        isSafeForMotherboard = prepared.isSafeForMotherboard
+    )
 
     fun scoreCompatibleImageHit(
         candidateTitle: String,
@@ -1506,24 +1860,17 @@ internal object MercadoLivreHtmlParser {
             hit.title
         }
         val hitTokens = TextNormalizer.tokenize(effectiveTitle).filter { it.length >= 2 }.toSet()
-        if (hitTokens.isEmpty()) return -1.0
-
-        val common = candTokens.intersect(hitTokens)
-        if (common.isEmpty()) return -1.0
-        val hasMeaningfulMatch = common.any { tok ->
-            tok !in ambiguousPhotoWords || tok.any { it.isDigit() }
-        }
-        if (!hasMeaningfulMatch && common.size < 2) return -1.0
-
-        val jaccard = common.size.toDouble() / candTokens.union(hitTokens).size.toDouble()
-        val isMlPage = hit.pageUrl.contains("mercadolivre.com.br", true)
-        val bonus = when {
-            isMlCdnPhoto -> 0.35
-            isMlPage -> 0.20
-            isTrustedProductPhotoUrl(chosenUrl) -> 0.08
-            else -> 0.0
-        }
-        return jaccard + bonus
+        val hitNormTextWithUrl = "${TextNormalizer.normalize(effectiveTitle)} ${TextNormalizer.normalize(hit.pageUrl)}".trim()
+        return computeCompatiblePhotoScore(
+            candTokens = candTokens,
+            candNormText = normCand,
+            hitTokens = hitTokens,
+            hitNormTextWithUrl = hitNormTextWithUrl,
+            isMlCdnPhoto = isMlCdnPhoto,
+            isMlPage = hit.pageUrl.contains("mercadolivre.com.br", true),
+            isTrustedPhoto = isTrustedProductPhotoUrl(chosenUrl),
+            isSafeForMotherboard = isSafeMotherboardImageHit(hit)
+        )
     }
 
     fun pickBestCompatibleImageHit(
@@ -1532,14 +1879,18 @@ internal object MercadoLivreHtmlParser {
         hits: List<SearchEngineImageHit>
     ): SearchEngineImageHit? {
         if (hits.isEmpty()) return null
+        val normCand = TextNormalizer.normalize(candidateTitle)
+        val candTokens = TextNormalizer.tokenize(normCand).filter { it.length >= 2 }.toSet()
         val candMlb = extractMlbId(productUrl)
         if (!candMlb.isNullOrBlank()) {
             val byId = hits.firstOrNull { hit ->
                 val url = hit.preferredImageUrl
                 val isMlCdn = url.contains("mlstatic.com", true)
+                val hitNormTextWithUrl = "${TextNormalizer.normalize(hit.title)} ${TextNormalizer.normalize(hit.pageUrl)}".trim()
                 extractMlbId(hit.pageUrl) == candMlb &&
                     url.isNotBlank() &&
-                    (isMlCdn || hit.title.isNotBlank())
+                    (isMlCdn || hit.title.isNotBlank()) &&
+                    isByIdHitCompatible(candTokens, normCand, hit, hitNormTextWithUrl)
             }
             if (byId != null) return byId
         }
@@ -1556,36 +1907,16 @@ internal object MercadoLivreHtmlParser {
     }
 
     /**
-     * Picks the cleanest live HTTPS product photo matching by compatibility score or trusted CDN/MLB ID.
+     * Picks a compatible live HTTPS product photo matching by MLB ID or strict title/model/capacity compatibility.
+     * Never attaches an unrelated image when no compatible match exists.
      */
     fun pickFallbackCandidateImageHit(
         candidateTitle: String,
         productUrl: String,
         hits: List<SearchEngineImageHit>
     ): SearchEngineImageHit? {
-        pickBestCompatibleImageHit(candidateTitle, productUrl, hits)?.let { return it }
-        if (candidateTitle.isBlank()) return null
-        val candMlb = extractMlbId(productUrl)
-
-        return hits
-            .filter { hit ->
-                val url = hit.preferredImageUrl
-                if (!url.startsWith("https://", true)) return@filter false
-                val isMlCdn = url.contains("mlstatic.com", true) || hit.imageUrl.contains("mlstatic.com", true)
-                val effectiveTitle = if (isMlCdn) hit.title.ifBlank { deriveTitleFromUrl(hit.pageUrl) } else hit.title
-                val hitTokens = TextNormalizer.tokenize(effectiveTitle).filter { it.length >= 2 }.toSet()
-                isMlCdn || hitTokens.isNotEmpty()
-            }
-            .maxByOrNull { hit ->
-                val url = hit.preferredImageUrl
-                when {
-                    url.contains("mlstatic.com", true) || hit.imageUrl.contains("mlstatic.com", true) -> 4
-                    !candMlb.isNullOrBlank() && extractMlbId(hit.pageUrl) == candMlb -> 4
-                    hit.pageUrl.contains("mercadolivre.com.br", true) -> 3
-                    hit.title.isNotBlank() -> 2
-                    else -> 1
-                }
-            }
+        if (candidateTitle.isBlank() || hits.isEmpty()) return null
+        return pickBestCompatibleImageHit(candidateTitle, productUrl, hits)
     }
 
     fun applyImageHits(
@@ -1605,6 +1936,7 @@ internal object MercadoLivreHtmlParser {
                 hit.title
             }
             val hitTokens = TextNormalizer.tokenize(effectiveTitle).filter { it.length >= 2 }.toSet()
+            val hitNormTextWithUrl = "${TextNormalizer.normalize(effectiveTitle)} ${TextNormalizer.normalize(hit.pageUrl)}".trim()
             PreparedImageHit(
                 hit = hit,
                 preferredUrl = preferredUrl,
@@ -1612,28 +1944,33 @@ internal object MercadoLivreHtmlParser {
                 isMlCdnPhoto = isMlCdnPhoto,
                 isMlPage = hit.pageUrl.contains("mercadolivre.com.br", true),
                 isTrustedPhoto = isTrustedProductPhotoUrl(preferredUrl),
-                hitTokens = hitTokens
+                hitTokens = hitTokens,
+                hitNormTextWithUrl = hitNormTextWithUrl,
+                isSafeForMotherboard = isSafeMotherboardImageHit(hit)
             )
         }
         if (preparedHits.isEmpty()) return candidates
 
         return candidates.map { candidate ->
             if (candidate.imageUrl.isNotBlank()) return@map candidate
+            val normCand = TextNormalizer.normalize(candidate.title)
+            val candTokens = TextNormalizer.tokenize(normCand)
+                .filter { it.length >= 2 }
+                .toSet()
             val candMlb = extractMlbId(candidate.productUrl)
             if (!candMlb.isNullOrBlank()) {
                 val byId = preparedHits.firstOrNull { prep ->
-                    prep.pageMlbId == candMlb && (prep.isMlCdnPhoto || prep.hit.title.isNotBlank())
+                    prep.pageMlbId == candMlb &&
+                        (prep.isMlCdnPhoto || prep.hit.title.isNotBlank()) &&
+                        isByIdHitCompatible(candTokens, normCand, prep.hit, prep.hitNormTextWithUrl)
                 }
                 if (byId != null) return@map candidate.copy(imageUrl = byId.preferredUrl)
             }
-            val candTokens = TextNormalizer.tokenize(TextNormalizer.normalize(candidate.title))
-                .filter { it.length >= 2 }
-                .toSet()
             if (candTokens.isEmpty()) return@map candidate
             var bestPrep: PreparedImageHit? = null
             var bestScore = 0.0
             for (prep in preparedHits) {
-                val score = scorePreparedImageHit(candTokens, prep)
+                val score = scorePreparedImageHit(candTokens, normCand, prep)
                 if (score > bestScore) {
                     bestScore = score
                     bestPrep = prep
@@ -1735,10 +2072,7 @@ internal object MercadoLivreHtmlParser {
                 cardEnd
             )
             val priceText = extractBrlPrice("$title ${cleanText(snippetHtml)}")
-            val imgUrl = imgSrcAttrSimpleRegex.findAll(blockHtml)
-                .map { HtmlTextDecoder.normalizeImageUrl(it.groupValues[1]) }
-                .firstOrNull { img -> isTrustedProductPhotoUrl(img) }
-                .orEmpty()
+            val imgUrl = extractCompatibleSnippetImg(blockHtml, title)
             mergeCandidate(
                 out,
                 RawStoreCandidate(
@@ -1788,13 +2122,10 @@ internal object MercadoLivreHtmlParser {
 
             val blockHtml = html.substring(
                 (match.range.first - 200).coerceAtLeast(0),
-                (match.range.last + 900).coerceAtMost(html.length)
+                (match.range.last + 750).coerceAtMost(html.length)
             )
             val priceText = extractBrlPrice("$title ${cleanText(blockHtml)}")
-            val imgUrl = imgSrcAttrSimpleRegex.findAll(blockHtml)
-                .map { HtmlTextDecoder.normalizeImageUrl(it.groupValues[1]) }
-                .firstOrNull { isTrustedProductPhotoUrl(it) }
-                .orEmpty()
+            val imgUrl = extractCompatibleSnippetImg(blockHtml, title, mlStaticPreferredOnly = true)
 
             mergeCandidate(
                 out,
@@ -2117,36 +2448,97 @@ internal object MercadoLivreHtmlParser {
     }
 
     fun parseNextDataPriceCatalog(html: String): List<Pair<String, String>> {
-        if (html.isBlank()) return emptyList()
+        return parseNextDataMediaAndPriceCatalog(html).first
+    }
+
+    /**
+     * Parses Zoom / Buscapé __NEXT_DATA__ JSON once to extract both verified BRL market prices
+     * and verified titled product photos (zero extra network requests, 100% accessible from BR IPs).
+     */
+    fun parseNextDataMediaAndPriceCatalog(html: String): Pair<List<Pair<String, String>>, List<SearchEngineImageHit>> {
+        if (html.isBlank()) return emptyList<Pair<String, String>>() to emptyList()
         val marker = "__NEXT_DATA__"
         val idx = html.indexOf(marker)
-        if (idx < 0) return emptyList()
+        if (idx < 0) return emptyList<Pair<String, String>>() to emptyList()
         val startBrace = html.indexOf('{', idx)
-        if (startBrace < 0) return emptyList()
-        val jsonSlice = extractBalancedJsonObject(html, startBrace, maxChars = 1_800_000) ?: return emptyList()
-        val root = runCatching { JSONObject(jsonSlice) }.getOrNull() ?: return emptyList()
+        if (startBrace < 0) return emptyList<Pair<String, String>>() to emptyList()
+        val jsonSlice = extractBalancedJsonObject(html, startBrace, maxChars = 1_800_000)
+            ?: return emptyList<Pair<String, String>>() to emptyList()
+        val root = runCatching { JSONObject(jsonSlice) }.getOrNull()
+            ?: return emptyList<Pair<String, String>>() to emptyList()
 
-        val found = LinkedHashMap<String, Pair<String, String>>()
+        val foundPrices = LinkedHashMap<String, Pair<String, String>>()
+        val foundImages = LinkedHashMap<String, SearchEngineImageHit>()
+
+        fun extractNodeImg(obj: JSONObject): String {
+            val directKeys = listOf("thumbnail", "image", "imageUrl", "image_url", "img", "photo", "mainImage")
+            for (k in directKeys) {
+                val raw = obj.opt(k)
+                when (raw) {
+                    is String -> {
+                        val norm = HtmlTextDecoder.normalizeImageUrl(raw)
+                        if (norm.startsWith("https://")) return norm
+                    }
+                    is JSONObject -> {
+                        val nested = raw.optString("url", "")
+                            .ifBlank { raw.optString("src", "") }
+                            .ifBlank { raw.optString("medium", "") }
+                            .ifBlank { raw.optString("large", "") }
+                        val norm = HtmlTextDecoder.normalizeImageUrl(nested)
+                        if (norm.startsWith("https://")) return norm
+                    }
+                }
+            }
+            val imagesArr = obj.optJSONArray("images") ?: obj.optJSONArray("thumbnails")
+            if (imagesArr != null && imagesArr.length() > 0) {
+                val first = imagesArr.opt(0)
+                val raw = when (first) {
+                    is String -> first
+                    is JSONObject -> first.optString("url", "").ifBlank { first.optString("src", "") }
+                    else -> ""
+                }
+                val norm = HtmlTextDecoder.normalizeImageUrl(raw)
+                if (norm.startsWith("https://")) return norm
+            }
+            return ""
+        }
+
         fun walk(node: Any?, depth: Int, counter: IntArray) {
-            if (depth > 16 || found.size >= 60 || counter[0] > 40_000 || node == null) return
+            if (depth > 16 || (foundPrices.size >= 60 && foundImages.size >= 60) || counter[0] > 40_000 || node == null) return
             counter[0]++
             when (node) {
                 is JSONObject -> {
                     val rawName = node.optString("name", "")
                         .ifBlank { node.optString("title", "") }
                         .trim()
-                    val priceVal = nextDataPriceKeys
-                        .firstNotNullOfOrNull { key ->
-                            node.optDouble(key, 0.0).takeIf { it.isFinite() && it >= 12.0 && it < 500_000.0 }
-                        } ?: node.optJSONObject("price")?.optDouble("value", 0.0)
-                        ?.takeIf { it.isFinite() && it >= 12.0 && it < 500_000.0 }
-                        ?: 0.0
-                    if (rawName.length >= 6 && priceVal >= 12.0 && !looksLikeUrlOrDomain(rawName)) {
+                    if (rawName.length >= 6 && !looksLikeUrlOrDomain(rawName)) {
                         val cleanTitle = cleanText(rawName)
                         val normKey = TextNormalizer.normalize(cleanTitle)
-                        val formatted = PriceFormatter.formatBrl(priceVal)
-                        if (normKey.length >= 6 && formatted.isNotBlank()) {
-                            found.putIfAbsent(normKey, cleanTitle to formatted)
+                        val priceVal = nextDataPriceKeys
+                            .firstNotNullOfOrNull { key ->
+                                node.optDouble(key, 0.0).takeIf { it.isFinite() && it >= 12.0 && it < 500_000.0 }
+                            } ?: node.optJSONObject("price")?.optDouble("value", 0.0)
+                            ?.takeIf { it.isFinite() && it >= 12.0 && it < 500_000.0 }
+                            ?: 0.0
+                        if (priceVal >= 12.0 && normKey.length >= 6) {
+                            val formatted = PriceFormatter.formatBrl(priceVal)
+                            if (formatted.isNotBlank()) {
+                                foundPrices.putIfAbsent(normKey, cleanTitle to formatted)
+                            }
+                        }
+                        if (normKey.length >= 6 && foundImages.size < 60) {
+                            val imgUrl = extractNodeImg(node)
+                            if (imgUrl.isNotBlank()) {
+                                foundImages.putIfAbsent(
+                                    normKey,
+                                    SearchEngineImageHit(
+                                        title = cleanTitle,
+                                        pageUrl = "",
+                                        imageUrl = imgUrl,
+                                        thumbUrl = ""
+                                    )
+                                )
+                            }
                         }
                     }
                     val keys = node.keys()
@@ -2162,7 +2554,7 @@ internal object MercadoLivreHtmlParser {
             }
         }
         walk(root, depth = 0, counter = intArrayOf(0))
-        return found.values.toList()
+        return foundPrices.values.toList() to foundImages.values.toList()
     }
 
     fun extractFirstValidJsonArray(rawText: String): JSONArray? {

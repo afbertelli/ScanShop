@@ -1810,6 +1810,491 @@ class MercadoLivreSearchTest {
         assertTrue(engine.isTransientNetworkError(java.net.UnknownHostException("offline")))
         assertFalse(engine.isTransientNetworkError(IllegalArgumentException("Schema validation syntax failure")))
     }
+
+    @Test
+    fun `applyImageHits and pickFallbackCandidateImageHit refuse wrong models, capacities, accessories, and ML UI badges`() {
+        assertEquals("", HtmlTextDecoder.normalizeImageUrl("https://http2.mlstatic.com/frontend-assets/ml-web-navigation/ui-navigation/6.6.0/mercadolibre/logo_large.png"))
+        assertEquals("", HtmlTextDecoder.normalizeImageUrl("https://http2.mlstatic.com/resources/badges/full_icon.png"))
+        assertEquals(
+            "https://http2.mlstatic.com/D_NQ_NP_123456-MLA-O.webp",
+            HtmlTextDecoder.normalizeImageUrl("https://http2.mlstatic.com/D_NQ_NP_123456-MLA-O.webp")
+        )
+
+        val s24 = RawStoreCandidate(
+            id = "ml_MLB555001",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Smartphone Samsung Galaxy S24 Ultra 256GB",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/samsung-galaxy-s24-ultra-256gb/p/MLB555001",
+            affiliateUrl = "https://www.mercadolivre.com.br/samsung-galaxy-s24-ultra-256gb/p/MLB555001"
+        )
+        val wrongHits = listOf(
+            SearchEngineImageHit(
+                title = "Smartphone Samsung Galaxy A15 128GB",
+                pageUrl = "https://www.mercadolivre.com.br/samsung-galaxy-a15/p/MLB999001",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_111111-O.webp",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "Capinha Silicone Samsung Galaxy S24 Ultra",
+                pageUrl = "https://www.mercadolivre.com.br/capinha-s24-ultra/p/MLB999002",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_222222-O.webp",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "Smartphone Samsung Galaxy S24 Ultra 512GB",
+                pageUrl = "https://www.mercadolivre.com.br/samsung-galaxy-s24-512gb/p/MLB999003",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_333333-O.webp",
+                thumbUrl = ""
+            )
+        )
+        assertEquals("", MercadoLivreHtmlParser.applyImageHits(listOf(s24), wrongHits).first().imageUrl)
+        assertEquals(
+            null,
+            MercadoLivreHtmlParser.pickFallbackCandidateImageHit(s24.title, s24.productUrl, wrongHits)
+        )
+
+        val exactHit = SearchEngineImageHit(
+            title = "Samsung Galaxy S24 Ultra 256GB Titânio",
+            pageUrl = "https://www.mercadolivre.com.br/galaxy-s24-ultra-256gb/p/MLB888777",
+            imageUrl = "https://http2.mlstatic.com/D_NQ_NP_444444-O.webp",
+            thumbUrl = ""
+        )
+        val withExact = MercadoLivreHtmlParser.applyImageHits(listOf(s24), wrongHits + exactHit)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_444444-O.webp", withExact.first().imageUrl)
+    }
+
+    @Test
+    fun `PDP and search-results parsers handle nested gallery CBT IDs, data-zoom after blank src, previous-class prices, and recommendations cutoff`() {
+        val pdpHtml = """
+            <html><body>
+              <h1 class="ui-pdp-title">SSD NVMe Kingston 1TB PCIe 4.0</h1>
+              <img class="ui-pdp-image ui-pdp-gallery__figure__image" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-zoom="https://http2.mlstatic.com/D_NQ_NP_778899-CBT74829102938_032024-O.webp" />
+              <div class="ui-pdp-price">
+                <s class="andes-money-amount ui-pdp-price__part andes-money-amount--previous">
+                  <span class="andes-money-amount__fraction">699</span>
+                </s>
+                <div class="ui-pdp-price__subtitles">em 12x <span class="andes-money-amount"><span class="andes-money-amount__fraction">49</span><span class="andes-money-amount__cents">90</span></span></div>
+              </div>
+              <script>
+                window.__PRELOADED_STATE__ = {"initialState":{"components":{"price":{"type":"price","value":{"currency_id":"BRL","value":479.90}}}}};
+              </script>
+              <section id="recommendations">
+                <h2>Quem viu também comprou</h2>
+                <img class="ui-pdp-image" src="https://http2.mlstatic.com/D_NQ_NP_999000-O.webp" />
+                <div class="ui-pdp-price__second-line"><span class="andes-money-amount__fraction">199</span></div>
+              </section>
+            </body></html>
+        """.trimIndent()
+        val (pdpTitle, pdpImg, pdpPrice) = MercadoLivreHtmlParser.parseSingleProductPageHtml(
+            pdpHtml,
+            "https://www.mercadolivre.com.br/ssd-kingston-1tb/p/MLB665544"
+        )
+        assertEquals("SSD NVMe Kingston 1TB PCIe 4.0", pdpTitle)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_778899-CBT74829102938_032025-O.webp".replace("032025", "032024"), pdpImg)
+        assertEquals("R$ 479,90", pdpPrice)
+
+        val pdpNestedPicturesHtml = """
+            <html><body>
+              <h1 class="ui-pdp-title">Headphone Bluetooth Importado</h1>
+              <script>
+                window.__PRELOADED_STATE__ = {"gallery":{"pictures":[{"size":{"width":500,"height":500},"id":"839201-CBT74829102938_032024"}]}};
+              </script>
+            </body></html>
+        """.trimIndent()
+        val (_, cbtImg, _) = MercadoLivreHtmlParser.parseSingleProductPageHtml(
+            pdpNestedPicturesHtml,
+            "https://www.mercadolivre.com.br/headphone-bt/p/MLB112200"
+        )
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_839201-CBT74829102938_032024-O.jpg", cbtImg)
+
+        val searchStateHtml = """
+            <script id="__PRELOADED_STATE__">
+            {"pageStoreState":{"initialState":{"search":{"results":[{"id":"MLB770011","permalink":"https://www.mercadolivre.com.br/monitor-lg-27/p/MLB770011","components":[{"type":"title","title":{"text":"Monitor Gamer LG 27 Full HD 144Hz"}},{"type":"picture","picture":{"pictures":[{"id":"554433-CBT8899"}]}},{"type":"price","price":{"current_price":{"value":899.0}}}]}]}}}}
+            </script>
+        """.trimIndent()
+        val stateItems = MercadoLivreHtmlParser.parseListingHtml(searchStateHtml, "monitor lg 27", "")
+        assertEquals(1, stateItems.size)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_554433-CBT8899-O.jpg", stateItems.first().imageUrl)
+        assertEquals("R$ 899,00", stateItems.first().priceText)
+    }
+
+    @Test
+    fun `placa mae Mercado Livre search never approves car plates and never pairs car plate photos`() {
+        val orchestrator = RealTimeSearchOrchestrator()
+        val profile = GeminiQueryAndVerifierEngine().buildHeuristicProfile("placa mae", emptyList())
+        val session = SearchSessionResult(
+            intentProfile = profile,
+            products = emptyList(),
+            storeReports = listOf(com.example.data.model.StoreFetchReport(StoreType.MERCADO_LIVRE, 0, 0)),
+            usedAiVerifier = false
+        )
+
+        val candidates = listOf(
+            RawStoreCandidate(
+                id = "ml_MLB7001",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Mãe Gigabyte B550M Aorus Elite AM4 DDR4",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_7001-O.webp",
+                productUrl = "https://www.mercadolivre.com.br/placa-mae-gigabyte-b550m/p/MLB7001",
+                affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-gigabyte-b550m/p/MLB7001",
+                priceText = "R$ 749,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_MLB7002",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa De Carro Mercosul Original Alumínio",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_7002-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-7002-placa-de-carro-mercosul-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-7002-placa-de-carro-mercosul-_JM",
+                priceText = "R$ 79,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_MLB7003",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Suporte Porta Placa Veicular Carro Moto Mercosul",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_7003-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-7003-porta-placa-carro-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-7003-porta-placa-carro-_JM",
+                priceText = "R$ 29,90"
+            )
+        )
+
+        val updated = runBlocking {
+            orchestrator.verifySingleStoreCandidates(
+                currentSession = session,
+                store = StoreType.MERCADO_LIVRE,
+                candidates = candidates
+            )
+        }
+        assertEquals(listOf("ml_MLB7001"), updated.products.map { it.id })
+
+        val moboNoImg = RawStoreCandidate(
+            id = "ml_MLB7010",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe Original Nova Preta",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-original/p/MLB7010",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-original/p/MLB7010",
+            priceText = "R$ 349,90"
+        )
+        val carPlateImageHits = listOf(
+            SearchEngineImageHit(
+                title = "Placa Original Nova Preta Carro Mercosul",
+                pageUrl = "https://produto.mercadolivre.com.br/MLB-8888-placa-carro-mercosul-_JM",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_8888-O.webp",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "Placa Original Nova Preta Alumínio",
+                pageUrl = "https://produto.mercadolivre.com.br/MLB-8889-placa-veicular-_JM",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_8889-O.webp",
+                thumbUrl = ""
+            )
+        )
+        val afterImg = MercadoLivreHtmlParser.applyImageHits(listOf(moboNoImg), carPlateImageHits)
+        assertEquals("", afterImg.first().imageUrl)
+    }
+
+    @Test
+    fun `byId image matching rejects car plate and unlabeled photos on motherboard listings`() {
+        val mobo = RawStoreCandidate(
+            id = "ml_MLB555001",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe Asus Prime B550M-A AM4 DDR4",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+            priceText = "R$ 699,90"
+        )
+        // Even if a noisy image parser accidentally pairs a car plate image or blank-title image with MLB555001,
+        // byId must NEVER attach it to a motherboard candidate.
+        val poisonedByIdHits = listOf(
+            SearchEngineImageHit(
+                title = "Placa Mercosul Carro Alumínio Detran",
+                pageUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_CARPLATE1-O.webp",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "",
+                pageUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_UNLABELED1-O.webp",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "Placa Alumínio Estampada Preta",
+                pageUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_GENERICPLATE-O.webp",
+                thumbUrl = ""
+            )
+        )
+
+        val afterApply = MercadoLivreHtmlParser.applyImageHits(listOf(mobo), poisonedByIdHits)
+        assertEquals("", afterApply.first().imageUrl)
+        assertEquals(
+            null,
+            MercadoLivreHtmlParser.pickBestCompatibleImageHit(mobo.title, mobo.productUrl, poisonedByIdHits)
+        )
+
+        // A genuine motherboard hit with matching ID and motherboard title MUST still succeed.
+        val validMoboHit = SearchEngineImageHit(
+            title = "Placa Mãe Asus Prime B550M-A AM4 DDR4",
+            pageUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-b550m/p/MLB555001",
+            imageUrl = "https://http2.mlstatic.com/D_NQ_NP_REALMOBO-O.webp",
+            thumbUrl = ""
+        )
+        val afterValid = MercadoLivreHtmlParser.applyImageHits(listOf(mobo), poisonedByIdHits + validMoboHit)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_REALMOBO-O.webp", afterValid.first().imageUrl)
+    }
+
+    @Test
+    fun `cross-tile image HTML does not leak motherboard URL onto neighboring car plate thumbnail`() {
+        val googleAdjacentTilesHtml = """
+            <div>
+              <a href="https://www.mercadolivre.com.br/placa-mae-b550m-aorus/p/MLB901122">Placa Mãe B550M Aorus</a>
+              <img src="https://http2.mlstatic.com/D_NQ_NP_REALMOBO901-O.jpg" alt="Placa Mãe Gigabyte B550M Aorus Elite AM4" />
+            </div>
+            <div>
+              <a href="https://produto.mercadolivre.com.br/MLB-901199-placa-carro-mercosul-_JM">Placa Carro Mercosul</a>
+              <img src="https://http2.mlstatic.com/D_NQ_NP_CARPLATE902-O.jpg" alt="Placa Mercosul Carro Alumínio" />
+            </div>
+        """.trimIndent()
+        val gHits = MercadoLivreHtmlParser.parseGoogleImagesHtml(googleAdjacentTilesHtml)
+        val carHit = gHits.firstOrNull { it.preferredImageUrl.contains("CARPLATE902") }
+        assertTrue(carHit == null || !carHit.pageUrl.contains("MLB901122"))
+        assertTrue(carHit == null || !MercadoLivreHtmlParser.isSafeMotherboardImageHit(carHit))
+
+        val bingAdjacentTilesHtml = """
+            <ul>
+              <li class="iuscp"><a href="https://www.mercadolivre.com.br/placa-mae-x99-machinist/p/MLB777888">link</a>
+                <img class="mimg" src="/th/id/OIP.realMoboThumb" alt="Placa Mãe X99 Machinist LGA 2011" /></li>
+              <li class="iuscp"><a href="https://produto.mercadolivre.com.br/MLB-777999-suporte-placa-carro-_JM">link</a>
+                <img class="mimg" src="/th/id/OIP.carPlateThumb" alt="Suporte Placa Carro Mercosul" /></li>
+            </ul>
+        """.trimIndent()
+        val bHits = MercadoLivreHtmlParser.parseBingImagesHtml(bingAdjacentTilesHtml)
+        val carBingHit = bHits.firstOrNull { it.preferredImageUrl.contains("carPlateThumb") }
+        assertTrue(carBingHit == null || !carBingHit.pageUrl.contains("MLB777888"))
+        assertTrue(carBingHit == null || !MercadoLivreHtmlParser.isSafeMotherboardImageHit(carBingHit))
+
+        val moboCand = RawStoreCandidate(
+            id = "bg_MLB777888",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe X99 Machinist LGA 2011",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-x99-machinist/p/MLB777888",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-x99-machinist/p/MLB777888"
+        )
+        val applied = MercadoLivreHtmlParser.applyImageHits(listOf(moboCand), gHits + bHits)
+        assertTrue(applied.first().imageUrl.contains("realMoboThumb"))
+        assertFalse(applied.first().imageUrl.contains("CARPLATE"))
+        assertFalse(applied.first().imageUrl.contains("carPlateThumb"))
+    }
+
+    @Test
+    fun `x99 motherboard with m2 spec matches compatible x99 photo and cards with photos sort first`() {
+        val x99M2 = RawStoreCandidate(
+            id = "bg_MLB801001",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe X99 LGA 2011-3 DDR4 NVMe M.2",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-x99-ddr4-m2/p/MLB801001",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-x99-ddr4-m2/p/MLB801001",
+            priceText = "R$ 399,90"
+        )
+        val hits = listOf(
+            SearchEngineImageHit(
+                title = "Placa Carro Mercosul X99 Alumínio",
+                pageUrl = "https://produto.mercadolivre.com.br/MLB-801999-placa-carro-_JM",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_CARPLATE_X99-O.jpg",
+                thumbUrl = ""
+            ),
+            SearchEngineImageHit(
+                title = "Placa Mãe X99 LGA 2011-3 DDR4 Xeon E5 NVMe",
+                pageUrl = "https://www.mercadolivre.com.br/placa-mae-x99-xeon-e5/p/MLB801555",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_X99_MOBO_OK-O.webp",
+                thumbUrl = ""
+            )
+        )
+        val matched = MercadoLivreHtmlParser.applyImageHits(listOf(x99M2), hits)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_X99_MOBO_OK-O.webp", matched.first().imageUrl)
+
+        val orchestrator = RealTimeSearchOrchestrator()
+        val blankExact = MatchedProduct(
+            id = "ml_MLB9001",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe X99 Machinist DDR4 LGA 2011-3",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-x99-sem-foto/p/MLB9001",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-x99-sem-foto/p/MLB9001",
+            deepLinkUrl = "",
+            priceText = "R$ 420,00",
+            categoryLabel = "",
+            matchedSpecs = emptyList(),
+            assertivenessScore = 0.92f,
+            matchVerdict = MatchVerdict.EXACT_MATCH,
+            matchReason = "Exato",
+            featureBreakdown = NeuralFeatureBreakdown(
+                semanticEmbeddingScore = 1f,
+                alphanumericModelScore = 1f,
+                brandAndLineScore = 1f,
+                itemHeadNounScore = 1f,
+                specQualityScore = 1f,
+                domainAlignmentScore = 1f,
+                compatibilityTrapScore = 0f,
+                sourceRelevanceSignal = 1f,
+                neuralProbability = 0.92f
+            )
+        )
+        val photoVariant = blankExact.copy(
+            id = "ml_MLB9002",
+            title = "Kit X99 Huananzhi DDR4 Xeon",
+            imageUrl = "https://http2.mlstatic.com/D_NQ_NP_X99_WITH_PHOTO-O.webp",
+            priceText = "R$ 549,90",
+            assertivenessScore = 0.58f,
+            matchVerdict = MatchVerdict.VARIANT_MATCH
+        )
+        val sorted = orchestrator.sortMatchedMlProducts(listOf(blankExact, photoVariant))
+        assertEquals(listOf("ml_MLB9002", "ml_MLB9001"), sorted.map { it.id })
+    }
+
+    @Test
+    fun `offline heuristic expands bare x99 query to placa mae with automotive anti-terms without misclassifying cpu queries`() {
+        val engine = com.example.ai.GeminiQueryAndVerifierEngine()
+        val x99Profile = engine.buildHeuristicProfile("X99", emptyList())
+        assertEquals("Placa-mãe", x99Profile.itemType)
+        assertTrue(
+            "Expected expanded 'placa mae' query first in offline heuristic: ${x99Profile.searchQueriesPt}",
+            x99Profile.searchQueriesPt.first().lowercase().contains("placa mae") &&
+                x99Profile.searchQueriesPt.first().lowercase().contains("x99")
+        )
+        assertTrue(
+            "Expected automotive anti-terms on bare x99 fallback",
+            x99Profile.antiTargetTerms.any { it.contains("mercosul", ignoreCase = true) }
+        )
+
+        // Ensure explicit CPU / cooler queries on a socket are NOT misclassified as motherboards
+        assertFalse(NeuralProductMatcher.isMotherboardQueryText("processador ryzen am4"))
+        assertFalse(NeuralProductMatcher.isMotherboardQueryText("cooler lga2011"))
+        assertTrue(NeuralProductMatcher.isMotherboardQueryText("x99"))
+        assertTrue(NeuralProductMatcher.isMotherboardQueryText("b550m"))
+    }
+
+    @Test
+    fun `buildImageFallbackCandidates generates webp, non-2x, and -F retries for mlstatic URLs`() {
+        val variants = HtmlTextDecoder.buildImageFallbackCandidates(
+            "https://http2.mlstatic.com/D_NQ_NP_2X_998877-MLA123456-O.jpg"
+        )
+        assertEquals(
+            "https://http2.mlstatic.com/D_NQ_NP_2X_998877-MLA123456-O.jpg",
+            variants.first()
+        )
+        assertTrue(variants.any { it.endsWith("-O.webp") })
+        assertTrue(variants.any { it.contains("D_NQ_NP_998877") && !it.contains("2X_") })
+        assertTrue(variants.size in 2..4)
+
+        val nonMl = HtmlTextDecoder.buildImageFallbackCandidates("https://example.com/photo.jpg")
+        assertEquals(listOf("https://example.com/photo.jpg"), nonMl)
+    }
+
+    @Test
+    fun `parseWebViewExtractedJson preserves state-backfilled mlstatic images and ignores data-image placeholders`() {
+        val payload = """
+            {
+              "blocked": false,
+              "href": "https://lista.mercadolivre.com.br/placa-mae-x99",
+              "items": [
+                {
+                  "title": "Placa Mãe X99 Machinist PR9 DDR4 LGA 2011-3",
+                  "url": "https://www.mercadolivre.com.br/placa-mae-x99-machinist-pr9/p/MLB3210001",
+                  "price": "R$ 449,90",
+                  "img": "https://http2.mlstatic.com/D_NQ_NP_900111-MLB3210001-O.jpg"
+                },
+                {
+                  "title": "Placa Mãe X99 Huananzhi QD4 Xeon DDR4",
+                  "url": "https://www.mercadolivre.com.br/placa-mae-x99-huananzhi-qd4/p/MLB3210002",
+                  "price": "R$ 589,00",
+                  "img": "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+                }
+              ],
+              "stateHtml": "",
+              "html": ""
+            }
+        """.trimIndent()
+
+        val parsed = com.example.data.network.parseWebViewExtractedJson(payload, "placa mae x99", "")
+        assertEquals(2, parsed.size)
+        assertEquals("https://http2.mlstatic.com/D_NQ_NP_900111-MLB3210001-O.jpg", parsed[0].imageUrl)
+        assertEquals("R$ 449,90", parsed[0].priceText)
+        assertEquals("", parsed[1].imageUrl)
+        assertEquals("R$ 589,00", parsed[1].priceText)
+    }
+
+    @Test
+    fun `parseNextDataMediaAndPriceCatalog extracts verified photos alongside prices and peer backfill rescues blank ML cards safely`() {
+        val zoomHtml = """
+            <html><head><script id="__NEXT_DATA__" type="application/json">
+            {"props":{"pageProps":{"products":[
+              {"name":"Placa Mãe X99 Machinist PR9 LGA 2011-3 DDR4","price":449.90,"thumbnail":"https://i.zst.com.br/thumbs/12/x99-pr9.jpg"}
+            ]}}}
+            </script></head></html>
+        """.trimIndent()
+        val (prices, imgHits) = MercadoLivreHtmlParser.parseNextDataMediaAndPriceCatalog(zoomHtml)
+        assertEquals(1, prices.size)
+        assertEquals(1, imgHits.size)
+        assertEquals("https://i.zst.com.br/thumbs/12/x99-pr9.jpg", imgHits.first().imageUrl)
+
+        val orchestrator = RealTimeSearchOrchestrator()
+        val blankMl = MatchedProduct(
+            id = "bg_MLB9911",
+            store = StoreType.MERCADO_LIVRE,
+            title = "Placa Mãe X99 Xeon E5 LGA 2011-3 DDR4 NVMe",
+            imageUrl = "",
+            productUrl = "https://www.mercadolivre.com.br/placa-mae-x99-e5/p/MLB9911",
+            affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-x99-e5/p/MLB9911",
+            deepLinkUrl = "",
+            priceText = "R$ 419,90",
+            categoryLabel = "",
+            matchedSpecs = emptyList(),
+            assertivenessScore = 0.85f,
+            matchVerdict = MatchVerdict.EXACT_MATCH,
+            matchReason = "Exato",
+            featureBreakdown = NeuralFeatureBreakdown(
+                semanticEmbeddingScore = 1f,
+                alphanumericModelScore = 1f,
+                brandAndLineScore = 1f,
+                itemHeadNounScore = 1f,
+                specQualityScore = 1f,
+                domainAlignmentScore = 1f,
+                compatibilityTrapScore = 0f,
+                sourceRelevanceSignal = 1f,
+                neuralProbability = 0.85f
+            )
+        )
+        val peers = listOf(
+            RawStoreCandidate(
+                id = "sp_car",
+                store = StoreType.SHOPEE,
+                title = "Placa Carro Mercosul X99 Alumínio",
+                imageUrl = "https://cf.shopee.com.br/file/carplate.jpg",
+                productUrl = "https://shopee.com.br/car",
+                affiliateUrl = "https://shopee.com.br/car"
+            ),
+            RawStoreCandidate(
+                id = "sp_x99",
+                store = StoreType.SHOPEE,
+                title = "Placa Mãe X99 Machinist PR9 LGA 2011-3 DDR4 NVMe",
+                imageUrl = "https://cf.shopee.com.br/file/mobo_x99_real.jpg",
+                productUrl = "https://shopee.com.br/x99",
+                affiliateUrl = "https://shopee.com.br/x99"
+            )
+        )
+        val rescued = orchestrator.backfillStillMissingMlPhotosFromVerifiedPeers(listOf(blankMl), peers)
+        assertEquals("https://cf.shopee.com.br/file/mobo_x99_real.jpg", rescued.first().imageUrl)
+    }
 }
+
+
 
 

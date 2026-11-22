@@ -173,9 +173,10 @@ class GeminiQueryAndVerifierEngine {
 
         val prompt = """
             Extraia a intencao exata de compra para busca em e-commerce (AliExpress, Shopee, Mercado Livre).
-            Corrija erros de digitacao e abreviacoes: "smartv" -> "Smart TV", "tphone"/"smartfone" -> "smartphone", "cel" -> "celular".
-            Em canonicalTermsPt inclua sinonimos usados em anuncios no Brasil (ex: para celular: ["smartphone", "celular", "telefone"]; para tv: ["smart tv", "tv", "televisor"]).
-            Em canonicalTermsEn inclua termos reais de anuncios em ingles (ex: para celular: ["smartphone", "mobile phone", "cell phone", "android phone"]; para tv: ["smart tv", "television"]).
+            Corrija erros de digitacao e abreviacoes: "smartv" -> "Smart TV", "tphone"/"smartfone" -> "smartphone", "cel" -> "celular", "placamae" -> "placa mãe".
+            Em canonicalTermsPt inclua sinonimos completos usados em anuncios no Brasil (ex: para celular: ["smartphone", "celular", "telefone"]; para tv: ["smart tv", "tv", "televisor"]; para placa mae: ["placa mae", "placa-mãe", "motherboard"]). NUNCA coloque termos genericos ambiguos sozinhos como "placa" em itemType ou canonicalTermsPt quando a busca for composta (ex: "placa mae" ou "placa de video").
+            Em antiTargetTerms inclua homonimos de categorias erradas (ex: para "placa mae", inclua "placa de carro", "placa mercosul", "placa veicular", "placa automotiva", "porta placa", "moldura placa", "placa de moto", "placa decorativa", "placa de video").
+            Em canonicalTermsEn inclua termos reais de anuncios em ingles (ex: para celular: ["smartphone", "mobile phone", "cell phone", "android phone"]; para tv: ["smart tv", "television"]; para placa mae: ["motherboard", "mainboard"]).
             Gere searchQueryPt e alternativeQueriesPt com ate 3 formas reais como vendedores brasileiros intitulam esse produto (ex: "smartphone Samsung", "celular Samsung", "Samsung Galaxy").
             Gere searchQueryEn e alternativeQueriesEn com ate 2 termos em ingles para AliExpress. Nao invente modelo ou especificacoes ausentes na pesquisa.
             Pesquisa: "$rawQuery"
@@ -261,12 +262,19 @@ class GeminiQueryAndVerifierEngine {
             val extraQualities = aiReqQualities.filter { it !in groundedReqQualities }
             val requiredQualities = groundedReqQualities
             val optionalQualities = (jsonArrayToList(json.optJSONArray("optionalQualities")) + extraQualities).distinct()
+            val rawWordCount = TextNormalizer.tokenize(normRawForCompare, dropStopWords = true).size
             val canonicalPt = (jsonArrayToList(json.optJSONArray("canonicalTermsPt")) + heuristic.canonicalTermsPt + itemType + normalizedRaw)
-                .map { it.trim() }.filter { it.isNotBlank() }.distinct()
+                .map { it.trim() }
+                .filter { term ->
+                    if (term.isBlank()) return@filter false
+                    val normTerm = TextNormalizer.normalize(term)
+                    !(rawWordCount >= 2 && normTerm in GENERIC_HOMONYM_SINGLE_TERMS)
+                }
+                .distinct()
             val canonicalEn = (jsonArrayToList(json.optJSONArray("canonicalTermsEn")) + heuristic.canonicalTermsEn)
                 .map { it.trim() }.filter { it.isNotBlank() }.distinct()
             val isAccessoryIntent = json.optBoolean("isAccessoryIntent", heuristic.isAccessoryIntent)
-            val antiTerms = jsonArrayToList(json.optJSONArray("antiTargetTerms"))
+            val antiTerms = (jsonArrayToList(json.optJSONArray("antiTargetTerms")) + heuristic.antiTargetTerms)
                 .map { it.trim() }.filter { it.isNotBlank() }.distinct()
 
             val qPtMain = json.optString("searchQueryPt", normalizedRaw).trim().ifBlank { normalizedRaw }
@@ -714,14 +722,49 @@ class GeminiQueryAndVerifierEngine {
 
         val accessoryMarkers = setOf("capa", "capinha", "pelicula", "cabo", "carregador", "adaptador", "suporte", "pulseira", "estojo", "almofada", "case", "controle")
         val isAccessory = tokens.any { it in accessoryMarkers }
+        val isMotherboardQuery = !isAccessory &&
+            com.example.data.search.NeuralProductMatcher.isMotherboardQueryText(normalizedCleanQuery) &&
+            AUTOMOTIVE_QUERY_TOKENS.none { it in tokens }
+
+        val nonCodeNonBrandTokens = tokens.filter { it !in codes && !it.equals(brand, true) }
+        val compoundFallbackItemType = when {
+            isMotherboardQuery -> "Placa-mãe"
+            nonCodeNonBrandTokens.size >= 2 && nonCodeNonBrandTokens.first() in GENERIC_HOMONYM_SINGLE_TERMS ->
+                nonCodeNonBrandTokens.take(3).joinToString(" ")
+            nonCodeNonBrandTokens.isNotEmpty() -> nonCodeNonBrandTokens.take(2).joinToString(" ")
+            else -> cleanQuery
+        }
         val itemType = primaryHint?.domainName?.takeIf { it.isNotBlank() }
-            ?: tokens.firstOrNull { it !in codes && !it.equals(brand, true) }
+            ?: compoundFallbackItemType
             ?: cleanQuery
 
-        val ptTerms = listOfNotNull(itemType, primaryHint?.domainName, primaryHint?.categoryName)
+        val rawPtTerms = buildList {
+            add(itemType)
+            primaryHint?.domainName?.let { add(it) }
+            primaryHint?.categoryName?.let { add(it) }
+            if (isMotherboardQuery) {
+                add("placa mae")
+                add("placa-mãe")
+                add("motherboard")
+            }
+        }
+        val ptTerms = rawPtTerms
             .map { it.trim() }
-            .filter { it.isNotBlank() }
+            .filter { term ->
+                if (term.isBlank()) return@filter false
+                val normTerm = TextNormalizer.normalize(term)
+                !(tokens.size >= 2 && normTerm in GENERIC_HOMONYM_SINGLE_TERMS)
+            }
             .distinct()
+        val expandedMotherboardQuery = if (
+            isMotherboardQuery &&
+            !normalizedCleanQuery.contains("placa mae") &&
+            !normalizedCleanQuery.contains("motherboard")
+        ) {
+            "placa mae $cleanQuery".trim()
+        } else {
+            null
+        }
         val hintTermQuery = ptTerms.firstOrNull { !cleanQuery.contains(it, ignoreCase = true) }
             ?.let { term ->
                 (listOfNotNull(term, brand, line, model) + codes)
@@ -729,12 +772,19 @@ class GeminiQueryAndVerifierEngine {
                     .joinToString(" ")
                     .trim()
             }
-        val ptQueries = listOfNotNull(cleanQuery, hintTermQuery, rawQuery.trim())
+        val ptQueries = listOfNotNull(expandedMotherboardQuery, cleanQuery, hintTermQuery, rawQuery.trim())
             .filter { it.isNotBlank() }
             .distinctBy { TextNormalizer.normalize(it) }
             .take(3)
-        val enTerms = listOfNotNull(brand, line, model).plus(codes).filter { it.isNotBlank() }.distinct()
+        val enTerms = buildList {
+            if (isMotherboardQuery) add("motherboard")
+            brand?.let { add(it) }
+            line?.let { add(it) }
+            model?.let { add(it) }
+            addAll(codes)
+        }.filter { it.isNotBlank() }.distinct()
         val enQueries = listOf(enTerms.joinToString(" ").trim().ifBlank { cleanQuery }).distinct()
+        val heuristicAntiTerms = if (isMotherboardQuery) MOTHERBOARD_ANTI_TARGET_TERMS else emptyList()
 
         return QueryIntentProfile(
             rawQuery = rawQuery.trim(),
@@ -748,8 +798,27 @@ class GeminiQueryAndVerifierEngine {
             requiredQualities = codes,
             isAccessoryIntent = isAccessory,
             expectedDomains = hints,
+            antiTargetTerms = heuristicAntiTerms,
             searchQueriesPt = ptQueries,
             searchQueriesEn = enQueries
+        )
+    }
+
+    private companion object {
+        val GENERIC_HOMONYM_SINGLE_TERMS = setOf(
+            "placa", "placas", "caixa", "caixas", "pasta", "base", "kit",
+            "peca", "pecas", "item", "produto", "suporte", "porta", "ar"
+        )
+        val AUTOMOTIVE_QUERY_TOKENS = setOf(
+            "carro", "carros", "veicular", "veiculo", "veiculos", "automotiva",
+            "automotivo", "mercosul", "moto", "motos", "motocicleta", "detran"
+        )
+        val MOTHERBOARD_ANTI_TARGET_TERMS = listOf(
+            "placa mercosul", "placa de carro", "placa carro", "placa veicular",
+            "placa automotiva", "placa de moto", "porta placa", "moldura placa",
+            "moldura de placa", "suporte de placa", "suporte placa",
+            "carro", "veicular", "automotiva", "mercosul", "detran",
+            "placa decorativa", "placa de video", "placa solar"
         )
     }
 

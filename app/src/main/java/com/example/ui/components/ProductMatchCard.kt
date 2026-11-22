@@ -42,6 +42,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,6 +54,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
@@ -114,44 +116,14 @@ fun ProductMatchCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Top
             ) {
-                val fullImageUrl = remember(product.imageUrl) {
-                    HtmlTextDecoder.normalizeImageUrl(product.imageUrl)
-                }
-                Box(
-                    modifier = Modifier
-                        .size(96.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFF8FAFC)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (fullImageUrl.isNotBlank()) {
-                        SubcomposeAsyncImage(
-                            model = fullImageUrl,
-                            contentDescription = product.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(96.dp),
-                            loading = {
-                                Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF1F5F9)))
-                            },
-                            error = { err ->
-                                Log.w("ProductMatchCard", "Image load failed: $fullImageUrl", err.result.throwable)
-                                Icon(
-                                    imageVector = Icons.Default.ShoppingBag,
-                                    contentDescription = null,
-                                    tint = Color(0xFF94A3B8),
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.ShoppingBag,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-                }
+                ProductThumbnailImage(
+                    imageUrl = product.imageUrl,
+                    contentDescription = product.title,
+                    size = 96.dp,
+                    cornerRadius = 12.dp,
+                    fallbackIconSize = 32.dp,
+                    logTag = "ProductMatchCard"
+                )
 
                 Column(
                     modifier = Modifier.weight(1f),
@@ -447,9 +419,6 @@ fun CarouselProductMatchCard(
                 .padding(6.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            val carouselImageUrl = remember(product.imageUrl) {
-                HtmlTextDecoder.normalizeImageUrl(product.imageUrl)
-            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -459,41 +428,14 @@ fun CarouselProductMatchCard(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(imageSize)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFFF8FAFC)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (carouselImageUrl.isNotBlank()) {
-                        SubcomposeAsyncImage(
-                            model = carouselImageUrl,
-                            contentDescription = product.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(imageSize),
-                            loading = {
-                                Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF1F5F9)))
-                            },
-                            error = { err ->
-                                Log.w("CarouselProductCard", "Image load failed: $carouselImageUrl", err.result.throwable)
-                                Icon(
-                                    imageVector = Icons.Default.ShoppingBag,
-                                    contentDescription = null,
-                                    tint = Color(0xFF94A3B8),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Default.ShoppingBag,
-                            contentDescription = null,
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                }
+                ProductThumbnailImage(
+                    imageUrl = product.imageUrl,
+                    contentDescription = product.title,
+                    size = imageSize,
+                    cornerRadius = 8.dp,
+                    fallbackIconSize = 20.dp,
+                    logTag = "CarouselProductCard"
+                )
 
                 val cleanCarouselTitle = remember(product.id, product.title, product.productUrl, product.store) {
                     sanitizeCardTitle(product.title, product.productUrl, product.store)
@@ -655,6 +597,67 @@ private fun NeuralMetricBar(
             color = if (pct >= 70) DealGreen else ShopeeOrange,
             trackColor = Color(0xFFE2E8F0)
         )
+    }
+}
+
+@Composable
+private fun ProductThumbnailImage(
+    imageUrl: String,
+    contentDescription: String,
+    size: Dp,
+    cornerRadius: Dp,
+    fallbackIconSize: Dp,
+    logTag: String
+) {
+    val candidates = remember(imageUrl) {
+        HtmlTextDecoder.buildImageFallbackCandidates(imageUrl)
+    }
+    var candidateIndex by remember(imageUrl) { mutableIntStateOf(0) }
+    val currentUrl = candidates.getOrNull(candidateIndex).orEmpty()
+
+    Box(
+        modifier = Modifier
+            .size(size)
+            .clip(RoundedCornerShape(cornerRadius))
+            .background(Color(0xFFF8FAFC)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (currentUrl.isNotBlank()) {
+            SubcomposeAsyncImage(
+                model = currentUrl,
+                contentDescription = contentDescription,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size),
+                onError = { err ->
+                    Log.w(logTag, "Image load failed (${candidateIndex + 1}/${candidates.size}): $currentUrl", err.result.throwable)
+                    if (candidateIndex + 1 < candidates.size) {
+                        candidateIndex++
+                    }
+                },
+                loading = {
+                    Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF1F5F9)))
+                },
+                error = {
+                    if (candidateIndex + 1 < candidates.size) {
+                        Box(modifier = Modifier.fillMaxSize().background(Color(0xFFF1F5F9)))
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.ShoppingBag,
+                            contentDescription = null,
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(fallbackIconSize)
+                        )
+                    }
+                }
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.ShoppingBag,
+                contentDescription = null,
+                tint = Color(0xFF94A3B8),
+                modifier = Modifier.size(fallbackIconSize)
+            )
+        }
     }
 }
 

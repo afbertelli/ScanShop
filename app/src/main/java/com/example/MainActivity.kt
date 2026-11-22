@@ -15,6 +15,7 @@ import coil.request.CachePolicy
 import com.example.ai.configureAppCheck
 import com.example.data.local.ScanShopDatabase
 import com.example.data.network.MercadoLivreClient
+import com.example.data.network.MercadoLivreWebViewExtractor
 import com.example.data.network.NetworkClientProvider
 import com.example.data.repository.FavoriteRepository
 import com.example.data.search.RealTimeSearchOrchestrator
@@ -95,6 +96,12 @@ class MainActivity : ComponentActivity() {
                 ScanShopApp(viewModel = viewModel)
             }
         }
+        MercadoLivreWebViewExtractor.attachHostActivity(this)
+    }
+
+    override fun onDestroy() {
+        MercadoLivreWebViewExtractor.detachHostActivity(this)
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

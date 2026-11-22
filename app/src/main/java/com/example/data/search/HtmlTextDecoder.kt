@@ -86,7 +86,9 @@ object HtmlTextDecoder {
     private val blockedImagePatterns = listOf(
         ".svg", "favicon", "sprite", "id=odls", "odls.", "/sa/simg/", "/rp/",
         "bing.com/rs/", "yimg.com/pv/", "yimg.com/rz/", "yimg.com/os/", "yimg.com/nn/",
-        "default_avatar", "placeholder", "1x1."
+        "default_avatar", "placeholder", "1x1.",
+        "frontend-assets", "/org-img/", "/badges/", "/banners/",
+        "full_icon", "meliplus", "meli-plus", "mercado-libre.png", "mercadolivre.png"
     )
 
     fun decodeUrlSafe(raw: String): String {
@@ -201,4 +203,56 @@ object HtmlTextDecoder {
         if (lower.endsWith("logo.png") || lower.endsWith("logo.jpg") || lower.contains("/logos/")) return ""
         return withScheme
     }
+
+    /**
+     * Generates an ordered list of fallback image URL variants (max 4) so Coil and live HEAD
+     * verification can automatically recover when an mlstatic.com edge CDN rejects `.jpg` vs
+     * `.webp`, `D_NQ_NP_2X_`, or `-O` vs `-F` on a user's mobile carrier network.
+     */
+    fun buildImageFallbackCandidates(rawUrl: String): List<String> {
+        val normalized = normalizeImageUrl(rawUrl)
+        if (normalized.isBlank()) return emptyList()
+        if (!normalized.contains("mlstatic.com", ignoreCase = true)) {
+            return listOf(normalized)
+        }
+        val candidates = LinkedHashSet<String>()
+        candidates.add(normalized)
+
+        val queryIdx = normalized.indexOf('?')
+        val base = if (queryIdx >= 0) normalized.substring(0, queryIdx) else normalized
+        val querySuffix = if (queryIdx >= 0) normalized.substring(queryIdx) else ""
+
+        fun swapExt(urlBase: String): String? = when {
+            urlBase.endsWith(".jpg", ignoreCase = true) -> urlBase.dropLast(4) + ".webp"
+            urlBase.endsWith(".jpeg", ignoreCase = true) -> urlBase.dropLast(5) + ".webp"
+            urlBase.endsWith(".webp", ignoreCase = true) -> urlBase.dropLast(5) + ".jpg"
+            else -> null
+        }
+
+        swapExt(base)?.let { candidates.add(it + querySuffix) }
+
+        val non2xBase = if (base.contains("D_NQ_NP_2X_", ignoreCase = true)) {
+            base.replace("D_NQ_NP_2X_", "D_NQ_NP_", ignoreCase = true)
+        } else {
+            base
+        }
+        if (non2xBase != base) {
+            candidates.add(non2xBase + querySuffix)
+            swapExt(non2xBase)?.let { candidates.add(it + querySuffix) }
+        }
+
+        if (non2xBase.endsWith("-O.jpg", ignoreCase = true) || non2xBase.endsWith("-O.webp", ignoreCase = true)) {
+            val stem = non2xBase.substringBeforeLast("-O.")
+            candidates.add("$stem-F.webp$querySuffix")
+            candidates.add("$stem-F.jpg$querySuffix")
+            candidates.add("$stem-V.webp$querySuffix")
+        } else if (non2xBase.endsWith("-F.jpg", ignoreCase = true) || non2xBase.endsWith("-F.webp", ignoreCase = true)) {
+            val stem = non2xBase.substringBeforeLast("-F.")
+            candidates.add("$stem-O.webp$querySuffix")
+            candidates.add("$stem-O.jpg$querySuffix")
+        }
+
+        return candidates.take(4)
+    }
 }
+

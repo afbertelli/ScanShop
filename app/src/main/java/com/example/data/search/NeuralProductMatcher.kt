@@ -79,6 +79,136 @@ class NeuralProductMatcher {
         )
         private val capacitySpecRegex = Regex("\\b\\d+(gb|tb)\\b")
 
+        private val AUTOMOTIVE_QUERY_TOKENS = setOf(
+            "carro", "carros", "veicular", "veiculo", "veiculos", "automotiva",
+            "automotivo", "automovel", "automoveis", "mercosul", "detran",
+            "moto", "motos", "motocicleta", "motocicletas", "caminhao", "carretinha", "reboque"
+        )
+
+        val AUTOMOTIVE_AND_PLATE_CONFLICT_TOKENS = setOf(
+            "carro", "carros", "veicular", "veiculo", "veiculos", "automotiva", "automotivo",
+            "automovel", "automoveis", "mercosul", "detran", "licenciamento", "emplacamento",
+            "moto", "motos", "motocicleta", "motocicletas", "caminhao", "caminhoes",
+            "caminhonete", "carretinha", "reboque", "reboques", "trator", "onibus",
+            "parachoque", "retrovisor", "volante", "pneu", "pneus", "chassi", "rabeta",
+            "engate", "escapamento", "lataria", "estacionamento", "garagem", "transito", "rodovia"
+        )
+
+        val NON_MOTHERBOARD_PLACA_PHRASES = setOf(
+            "placa mercosul", "placa de carro", "placa carro", "placa para carro",
+            "placa veicular", "placa automotiva", "placa de moto", "placa moto", "placa para moto",
+            "porta placa", "moldura de placa", "moldura placa", "suporte de placa", "suporte placa",
+            "lacre de placa", "parafuso placa", "luz de placa", "led placa", "iluminacao placa",
+            "camera de re", "eliminador de rabeta", "placa dianteira", "placa traseira",
+            "dianteira traseira", "par de placas", "par placas", "placa cinza", "placa preta",
+            "placa vermelha", "placa amarela", "placa colecionador", "placa antiga", "mini placa",
+            "placa personalizada", "placa decorativa", "placa de sinalizacao", "placa sinalizacao",
+            "placa de aviso", "placa aviso", "placa solar", "placa fotovoltaica",
+            "placa de video", "placa video", "placa 3d", "placa mdf", "placa pvc",
+            "placa gesso", "placa eva", "placa homenagem", "dia das maes", "presente mae",
+            "te amo mae", "melhor mae", "mae a bordo", "bebe a bordo", "placa acrilico",
+            "placa de rua", "numero residencial", "placa endereco",
+            "acessorios para veiculos", "pecas de carros", "para choque", "porta malas"
+        )
+
+        val MOTHERBOARD_HARDWARE_TOKENS = setOf(
+            "motherboard", "mainboard", "mobo", "am4", "am5", "am3", "fm2",
+            "lga", "lga775", "lga1150", "lga1151", "lga1155", "lga1156",
+            "lga1200", "lga1700", "lga1851", "lga2011",
+            "ddr2", "ddr3", "ddr4", "ddr5", "atx", "matx", "microatx", "itx",
+            "nvme", "pcie", "sata", "chipset", "soquete", "socket", "bios",
+            "ryzen", "xeon", "intel", "amd",
+            "a320", "a520", "a620", "b350", "b450", "b550", "b650", "b760", "b660", "b560", "b460", "b360",
+            "h61", "h81", "h110", "h310", "h410", "h510", "h610",
+            "x79", "x99", "x470", "x570", "x670", "x870", "z490", "z590", "z690", "z790", "z890",
+            "a320m", "a520m", "a620m", "b450m", "b550m", "b650m", "b760m", "h510m", "h610m",
+            "asus", "gigabyte", "msi", "asrock", "biostar", "aorus", "machinist",
+            "huananzhi", "kllisre", "qiyida", "soyo", "maxsun", "duex", "mancer",
+            "pichau", "revenger", "knup", "brazilpc", "colorful", "evga", "ecs", "foxconn", "pcware"
+        )
+
+        private val AUTOMOTIVE_DOMAIN_MARKERS = listOf(
+            "VEHICLE", "LICENSE_PLATE", "MOTORCYCLE", "AUTOMOTIVE", "CAR_", "MLB5672"
+        )
+
+        private val ELECTRONICS_DOMAIN_MARKERS = listOf(
+            "MOTHERBOARD", "CELLPHONE", "COMPUTER", "VIDEO_CARD", "PROCESSOR",
+            "TELEVISION", "HEADPHONE", "NOTEBOOK", "LAPTOP", "TABLET", "CONSOLE"
+        )
+
+        private val GENERIC_PLACA_SINGLE_TERMS = setOf("placa", "placas")
+
+        private val MOTHERBOARD_CHIPSET_QUERY_TOKENS = setOf(
+            "x99", "x79", "x58", "x299", "x570", "x670", "x670e", "x870",
+            "am4", "am5", "a320", "a320m", "a520", "a520m", "a620", "a620m",
+            "b450", "b450m", "b550", "b550m", "b650", "b650m", "b560", "b560m",
+            "b660", "b660m", "b760", "b760m", "h61", "h81", "h110", "h310",
+            "h310m", "h410", "h410m", "h510", "h510m", "h610", "h610m",
+            "z490", "z590", "z690", "z790", "lga2011", "lga1155", "lga1151",
+            "lga1200", "lga1700", "lga1851", "machinist", "huananzhi", "qiyida",
+            "kllisre", "atermiter", "jingsha"
+        )
+
+        private val NON_MOTHERBOARD_PC_COMPONENT_TOKENS = setOf(
+            "processador", "cpu", "cooler", "watercooler", "aircooler",
+            "memoria", "ram", "ssd", "nvme", "fonte", "gabinete", "gpu",
+            "ventoinha", "fan", "pasta", "termica", "cabo", "adaptador", "suporte"
+        )
+
+        fun isMotherboardQueryText(query: String): Boolean {
+            val norm = TextNormalizer.normalize(query)
+            if (norm.isBlank()) return false
+            val tokens = TextNormalizer.tokenize(norm, dropStopWords = false).toSet()
+            if (tokens.any { it in AUTOMOTIVE_QUERY_TOKENS }) return false
+            if (norm.contains("placa mae") ||
+                norm.contains("motherboard") ||
+                norm.contains("mainboard") ||
+                "mobo" in tokens
+            ) {
+                return true
+            }
+            val hasOtherPcComponent = tokens.any { it in NON_MOTHERBOARD_PC_COMPONENT_TOKENS } ||
+                norm.contains("placa de video") ||
+                norm.contains("water cooler")
+            return !hasOtherPcComponent && tokens.any { it in MOTHERBOARD_CHIPSET_QUERY_TOKENS }
+        }
+
+        fun isAutomotiveOrNonMotherboardCandidate(
+            title: String,
+            productUrl: String = "",
+            categoryPath: String = "",
+            domainId: String = "",
+            attributesText: String = ""
+        ): Boolean {
+            val upperDomain = domainId.uppercase()
+            val upperCat = categoryPath.uppercase()
+            if (AUTOMOTIVE_DOMAIN_MARKERS.any { upperDomain.contains(it) || upperCat.contains(it) }) {
+                return true
+            }
+            val normTitle = TextNormalizer.normalize(title)
+            val normUrl = TextNormalizer.normalize(productUrl)
+            val normCat = TextNormalizer.normalize(categoryPath)
+            val normAttrs = TextNormalizer.normalize(attributesText)
+            val combined = "$normTitle $normAttrs $normCat $normUrl".trim()
+            if (combined.isBlank()) return false
+            val tokens = TextNormalizer.tokenize(combined, dropStopWords = false).toSet()
+
+            if (tokens.any { it in AUTOMOTIVE_AND_PLATE_CONFLICT_TOKENS }) {
+                return true
+            }
+            if (NON_MOTHERBOARD_PLACA_PHRASES.any { combined.contains(it) }) {
+                return true
+            }
+
+            val hasMotherboardIdentity = combined.contains("placa mae") ||
+                combined.contains("placas mae") ||
+                combined.contains("motherboard") ||
+                combined.contains("mainboard") ||
+                upperDomain.contains("MOTHERBOARD") ||
+                tokens.any { it in MOTHERBOARD_HARDWARE_TOKENS }
+            return !hasMotherboardIdentity
+        }
+
         private val W1: Array<FloatArray> = arrayOf(
             floatArrayOf(1.1f, 1.8f, 1.4f, 1.6f, 1.1f, 0.7f, 1.5f, 0.3f),
             floatArrayOf(0.8f, 2.1f, 1.2f, 1.4f, 0.8f, 0.5f, 1.6f, 0.2f),
@@ -141,21 +271,45 @@ class NeuralProductMatcher {
             emptyList()
         }
 
+        val isMotherboardIntent: Boolean = !profile.isAccessoryIntent &&
+            queryTokensSet.none { it in AUTOMOTIVE_QUERY_TOKENS } && (
+            normRawQuery.contains("placa mae") ||
+                normRawQuery.contains("motherboard") ||
+                normRawQuery.contains("mainboard") ||
+                "mobo" in queryTokensSet ||
+                profile.expectedDomains.any {
+                    it.domainId.uppercase().contains("MOTHERBOARD") ||
+                        TextNormalizer.normalize(it.domainName).contains("placa mae") ||
+                        TextNormalizer.normalize(it.domainName).contains("placas mae") ||
+                        TextNormalizer.normalize(it.categoryName).contains("placa mae") ||
+                        TextNormalizer.normalize(it.categoryName).contains("placas mae")
+                } ||
+                (listOf(profile.itemType) + profile.canonicalTermsPt + profile.canonicalTermsEn).any { term ->
+                    val nt = TextNormalizer.normalize(term)
+                    nt.contains("placa mae") || nt.contains("motherboard") || nt.contains("mainboard")
+                }
+            )
+
         val canonicalTermsWithTokens: List<Pair<String, List<String>>> =
             (profile.canonicalTermsPt + profile.canonicalTermsEn + profile.itemType)
                 .map { TextNormalizer.normalize(it) }
-                .filter { it.isNotBlank() }
+                .filter { term ->
+                    term.isNotBlank() && !(isMotherboardIntent && term in GENERIC_PLACA_SINGLE_TERMS)
+                }
                 .distinct()
                 .map { phrase -> phrase to TextNormalizer.tokenize(phrase) }
 
         val canonicalForHeadWithTokens: List<Pair<String, List<String>>> = run {
             val base = (profile.canonicalTermsPt + profile.canonicalTermsEn + profile.itemType)
                 .map { TextNormalizer.normalize(it) }
-                .filter { it.isNotBlank() }
+                .filter { term ->
+                    term.isNotBlank() && !(isMotherboardIntent && term in GENERIC_PLACA_SINGLE_TERMS)
+                }
             val resolved = base.ifEmpty {
                 val rawBrandNorm = profile.brand?.let { TextNormalizer.normalize(it) }
                 TextNormalizer.tokenize(profile.rawQuery)
                     .filter { it != rawBrandNorm && it !in profile.alphanumericCodes }
+                    .filter { !(isMotherboardIntent && it in GENERIC_PLACA_SINGLE_TERMS) }
             }.distinct()
             resolved.map { phrase -> phrase to TextNormalizer.tokenize(phrase) }
         }
@@ -299,7 +453,25 @@ class NeuralProductMatcher {
         var neuralProb = runMlpForward(features)
 
         var hardRejectReason: String? = null
-        if (!profile.isAccessoryIntent && headEval.hasConflictingCategory) {
+        val isAutomotiveDomainMismatch = !profile.isAccessoryIntent &&
+            candidate.domainId.isNotBlank() &&
+            ctx.expectedDomainIds.any { exp -> ELECTRONICS_DOMAIN_MARKERS.any { exp.contains(it) } } &&
+            AUTOMOTIVE_DOMAIN_MARKERS.any { candidate.domainId.uppercase().contains(it) }
+
+        if (ctx.isMotherboardIntent && isAutomotiveOrNonMotherboardCandidate(
+                title = candidate.title,
+                productUrl = candidate.productUrl,
+                categoryPath = candidate.categoryPath,
+                domainId = candidate.domainId,
+                attributesText = attrText
+            )
+        ) {
+            neuralProb *= 0.08f
+            hardRejectReason = "Anúncio fora da categoria de placa-mãe (ex.: placa automotiva/veicular ou outro tipo de placa)."
+        } else if (isAutomotiveDomainMismatch) {
+            neuralProb *= 0.12f
+            hardRejectReason = "Categoria automotiva incompatível com a busca (${profile.itemType})."
+        } else if (!profile.isAccessoryIntent && headEval.hasConflictingCategory) {
             neuralProb *= 0.20f
             hardRejectReason = "Categoria diferente da buscada (${profile.itemType})."
         } else if (!profile.isAccessoryIntent && headEval.hasAntiAccessoryInHead) {

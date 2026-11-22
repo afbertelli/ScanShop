@@ -456,4 +456,114 @@ class NeuralProductMatcherTest {
         val scored = matcher.scoreAndFilter(spuriousProfile, listOf(junkClip)).single()
         assertTrue(scored.hardRejected)
     }
+
+    @Test
+    fun `placa mae search rejects all car license plates vehicle mounts decorative signs and gpus while approving real motherboards`() {
+        val heuristicProfile = com.example.ai.GeminiQueryAndVerifierEngine()
+            .buildHeuristicProfile("placa mae", emptyList())
+
+        assertFalse(
+            "Bare 'placa' must never pollute canonicalTermsPt for 'placa mae'",
+            heuristicProfile.canonicalTermsPt.any { TextNormalizer.normalize(it) == "placa" }
+        )
+
+        val candidates = listOf(
+            RawStoreCandidate(
+                id = "ml_mobo_am4",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Mãe Asus Prime A520M-E Socket AM4 DDR4 Micro ATX",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_1001-O.webp",
+                productUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-a520m-e/p/MLB1001",
+                affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-asus-prime-a520m-e/p/MLB1001",
+                priceText = "R$ 429,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_mobo_intel",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Mãe H61 LGA 1155 DDR3 HDMI NVMe M.2 Para Processador Intel",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_1002-O.webp",
+                productUrl = "https://www.mercadolivre.com.br/placa-mae-h61-lga-1155/p/MLB1002",
+                affiliateUrl = "https://www.mercadolivre.com.br/placa-mae-h61-lga-1155/p/MLB1002",
+                priceText = "R$ 219,00"
+            ),
+            RawStoreCandidate(
+                id = "ml_car_plate_mercosul",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Mercosul Carro Alumínio Padrão Novo Original",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2001-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2001-placa-mercosul-carro-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2001-placa-mercosul-carro-_JM",
+                priceText = "R$ 89,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_car_plate_pair",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Par De Placa De Carro Mercosul Dianteira E Traseira",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2002-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2002-par-placa-carro-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2002-par-placa-carro-_JM",
+                priceText = "R$ 159,00"
+            ),
+            RawStoreCandidate(
+                id = "ml_car_plate_holder",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Moldura Suporte Porta Placa Veicular Automotiva Preto",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2003-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2003-porta-placa-veicular-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2003-porta-placa-veicular-_JM",
+                priceText = "R$ 34,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_vague_plate_with_car_url",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Par De Placas Alumínio Padrão Novo 40x13cm",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2004-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2004-placa-mercosul-carro-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2004-placa-mercosul-carro-_JM",
+                priceText = "R$ 120,00"
+            ),
+            RawStoreCandidate(
+                id = "ml_car_plate_mae_a_bordo",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Carro Mãe a Bordo Automotiva Personalizada",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2005-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2005-placa-carro-mae-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2005-placa-carro-mae-_JM",
+                priceText = "R$ 29,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_decor_dia_das_maes",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa Decorativa Homenagem Dia Das Mães MDF",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2006-O.webp",
+                productUrl = "https://produto.mercadolivre.com.br/MLB-2006-placa-decorativa-mae-_JM",
+                affiliateUrl = "https://produto.mercadolivre.com.br/MLB-2006-placa-decorativa-mae-_JM",
+                priceText = "R$ 39,90"
+            ),
+            RawStoreCandidate(
+                id = "ml_gpu_wrong_placa",
+                store = StoreType.MERCADO_LIVRE,
+                title = "Placa De Vídeo GeForce RTX 4060 8GB GDDR6 Asus",
+                imageUrl = "https://http2.mlstatic.com/D_NQ_NP_2007-O.webp",
+                productUrl = "https://www.mercadolivre.com.br/placa-de-video-rtx-4060/p/MLB2007",
+                affiliateUrl = "https://www.mercadolivre.com.br/placa-de-video-rtx-4060/p/MLB2007",
+                priceText = "R$ 1.899,00"
+            )
+        )
+
+        val scored = matcher.scoreAndFilter(heuristicProfile, candidates).associateBy { it.candidate.id }
+
+        assertFalse(scored.getValue("ml_mobo_am4").hardRejected)
+        assertTrue(scored.getValue("ml_mobo_am4").breakdown.neuralProbability > 0.60f)
+        assertFalse(scored.getValue("ml_mobo_intel").hardRejected)
+        assertTrue(scored.getValue("ml_mobo_intel").breakdown.neuralProbability > 0.60f)
+
+        assertTrue(scored.getValue("ml_car_plate_mercosul").hardRejected)
+        assertTrue(scored.getValue("ml_car_plate_pair").hardRejected)
+        assertTrue(scored.getValue("ml_car_plate_holder").hardRejected)
+        assertTrue(scored.getValue("ml_vague_plate_with_car_url").hardRejected)
+        assertTrue(scored.getValue("ml_car_plate_mae_a_bordo").hardRejected)
+        assertTrue(scored.getValue("ml_decor_dia_das_maes").hardRejected)
+        assertTrue(scored.getValue("ml_gpu_wrong_placa").hardRejected)
+    }
 }

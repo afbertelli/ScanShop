@@ -37,6 +37,7 @@ object TextNormalizer {
     private val mobilephoneRegex = Regex("\\bmobilephone\\b")
     private val celuarRegex = Regex("\\bceluar\\b")
     private val notbookRegex = Regex("\\bnotbook\\b")
+    private val placamaeRegex = Regex("\\bplacamae\\b")
 
     private val querySmartvRegex = Regex("(?i)\\bsmartv\\b")
     private val querySmarttvRegex = Regex("(?i)\\bsmarttv\\b")
@@ -45,6 +46,7 @@ object TextNormalizer {
     private val querySmatphoneRegex = Regex("(?i)\\bsmatphone\\b")
     private val queryTphoneRegex = Regex("(?i)\\btphone\\b")
     private val queryCeluarRegex = Regex("(?i)\\bceluar\\b")
+    private val queryPlacamaeRegex = Regex("(?i)\\bplacamae\\b")
     private val queryBrandNumberGluedRegex = Regex("(?i)\\b(iphone|galaxy|redmi|poco|playstation)(\\d+)\\b")
 
     private const val NORM_CACHE_MAX_ENTRIES = 256
@@ -100,6 +102,7 @@ object TextNormalizer {
             .replace(mobilephoneRegex, "mobile phone")
             .replace(celuarRegex, "celular")
             .replace(notbookRegex, "notebook")
+            .replace(placamaeRegex, "placa mae")
             .replace("wi-fi", "wifi")
             .replace("sem-fio", "sem fio")
             .replace("type-c", "usbc")
@@ -133,6 +136,7 @@ object TextNormalizer {
             .replace(querySmatphoneRegex, "smartphone")
             .replace(queryTphoneRegex, "smartphone")
             .replace(queryCeluarRegex, "celular")
+            .replace(queryPlacamaeRegex, "placa mae")
             .replace(queryBrandNumberGluedRegex) { m ->
                 "${m.groupValues[1]} ${m.groupValues[2]}"
             }

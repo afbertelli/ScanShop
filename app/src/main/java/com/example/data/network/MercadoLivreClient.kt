@@ -10,6 +10,7 @@ import com.example.data.model.ProductAttribute
 import com.example.data.model.RawStoreCandidate
 import com.example.data.model.StoreType
 import com.example.data.search.HtmlTextDecoder
+import com.example.data.search.NeuralProductMatcher
 import com.example.data.search.TextNormalizer
 import com.example.ui.util.DeepLinkUtils
 import com.google.firebase.Firebase
@@ -386,13 +387,25 @@ class MercadoLivreClient(context: Context? = null) {
             val catalogRes = executeAuthenticatedApiGet(catalogActiveUrl, credentialsConfigured)
             if (catalogRes.code in 200..299) {
                 val catOutcome = parseSearchApiResponse(catalogRes.body, primaryQuery)
+                val isMotherboardFallback = expandedQueries.any { NeuralProductMatcher.isMotherboardQueryText(it) } ||
+                    NeuralProductMatcher.isMotherboardQueryText(cleanQuery)
                 val queryTokens = TextNormalizer.tokenize(expandedQueries.joinToString(" ")).filter { it.length >= 2 }.toSet()
-                val titleMatched = if (queryTokens.isEmpty()) {
-                    catOutcome.candidates
-                } else {
-                    catOutcome.candidates.filter { cand ->
+                val titleMatched = catOutcome.candidates.filter { cand ->
+                    if (isMotherboardFallback && NeuralProductMatcher.isAutomotiveOrNonMotherboardCandidate(
+                            title = cand.title,
+                            productUrl = cand.productUrl,
+                            categoryPath = cand.categoryPath,
+                            domainId = cand.domainId
+                        )
+                    ) {
+                        return@filter false
+                    }
+                    if (queryTokens.isEmpty()) {
+                        true
+                    } else {
                         val titleTokens = TextNormalizer.tokenize(cand.title).toSet()
-                        queryTokens.any { qt -> qt in titleTokens || TextNormalizer.normalize(cand.title).contains(qt) }
+                        val normCandTitle = TextNormalizer.normalize(cand.title)
+                        queryTokens.any { qt -> qt in titleTokens || normCandTitle.contains(qt) }
                     }
                 }
                 if (titleMatched.isNotEmpty()) {
@@ -491,8 +504,26 @@ class MercadoLivreClient(context: Context? = null) {
                             url = leadListingUrl,
                             query = pageQuery,
                             domainHint = "",
-                            timeoutMs = if (targetPage <= 1) 9_500L else 7_500L
+                            timeoutMs = if (targetPage <= 1) 8_500L else 7_500L
                         )
+                        if (targetPage <= 1 && webViewBatch.size < 4) {
+                            val jmUrl = listingUrls.lastOrNull { it.contains("jm/search", true) && it != leadListingUrl }
+                            if (!jmUrl.isNullOrBlank()) {
+                                val fallbackBatch = webViewExtractor.fetchListingCandidates(
+                                    url = jmUrl,
+                                    query = pageQuery,
+                                    domainHint = "",
+                                    timeoutMs = 5_500L
+                                )
+                                if (fallbackBatch.isNotEmpty()) {
+                                    val combinedWv = LinkedHashMap<String, RawStoreCandidate>()
+                                    (webViewBatch + fallbackBatch).forEach {
+                                        MercadoLivreHtmlParser.mergeCandidate(combinedWv, it)
+                                    }
+                                    webViewBatch = combinedWv.values.toList()
+                                }
+                            }
+                        }
                     }
                 }
                 listingUrls.forEachIndexed { idx, listingUrl ->
@@ -594,9 +625,27 @@ class MercadoLivreClient(context: Context? = null) {
             return@coroutineScope StoreFetchOutcome(emptyList(), hasMore = false)
         }
 
+        val isMotherboardSearch = expandedQueries.any { NeuralProductMatcher.isMotherboardQueryText(it) } ||
+            NeuralProductMatcher.isMotherboardQueryText(rawFallbackQuery)
+        val domainFilteredCandidates = if (isMotherboardSearch) {
+            merged.values.filterNot { cand ->
+                NeuralProductMatcher.isAutomotiveOrNonMotherboardCandidate(
+                    title = cand.title,
+                    productUrl = cand.productUrl,
+                    categoryPath = cand.categoryPath,
+                    domainId = cand.domainId
+                )
+            }
+        } else {
+            merged.values.toList()
+        }
+        if (domainFilteredCandidates.isEmpty()) {
+            return@coroutineScope StoreFetchOutcome(emptyList(), hasMore = false)
+        }
+
         val enriched = prioritizeCandidates(
             enrichMissingImagesAndPrices(
-                candidates = merged.values.toList(),
+                candidates = domainFilteredCandidates,
                 fallbackSearchHint = primaryQuery,
                 deadlineMs = deadlineMs,
                 preHarvestedPrices = harvestedTitlePrices,
@@ -1075,10 +1124,16 @@ class MercadoLivreClient(context: Context? = null) {
     ): List<RawStoreCandidate> = coroutineScope {
         val clean = query.trim()
         if (clean.isBlank()) return@coroutineScope emptyList()
-        val siteExpr = URLEncoder.encode("site:mercadolivre.com.br $clean", "UTF-8")
-        val pricedSiteExpr = URLEncoder.encode("site:mercadolivre.com.br $clean \"R$\"", "UTF-8")
-        val prodExpr = URLEncoder.encode("site:produto.mercadolivre.com.br $clean", "UTF-8")
-        val catExpr = URLEncoder.encode("site:mercadolivre.com.br/p/ $clean", "UTF-8")
+        val isMotherboardSearch = NeuralProductMatcher.isMotherboardQueryText(clean)
+        // Do not append multiple negative -operators to web search queries: on Brazilian Bing/Yahoo
+        // IPs they collapse recall down to a handful of results. Automotive/car-plate items are
+        // deterministically filtered in Kotlin below via isAutomotiveOrNonMotherboardCandidate.
+        val searchEngineQuery = clean
+        val imageSearchQuery = clean
+        val siteExpr = URLEncoder.encode("site:mercadolivre.com.br $searchEngineQuery", "UTF-8")
+        val pricedSiteExpr = URLEncoder.encode("site:mercadolivre.com.br $searchEngineQuery \"R$\"", "UTF-8")
+        val prodExpr = URLEncoder.encode("site:produto.mercadolivre.com.br $searchEngineQuery", "UTF-8")
+        val catExpr = URLEncoder.encode("site:mercadolivre.com.br/p/ $searchEngineQuery", "UTF-8")
         val bingOffset = ((page - 1).coerceAtLeast(0) * 20) + 1
         val bingNextOffset = bingOffset + 10
         val yahooOffset = ((page - 1).coerceAtLeast(0) * 20) + 1
@@ -1086,25 +1141,49 @@ class MercadoLivreClient(context: Context? = null) {
         val combined = LinkedHashMap<String, RawStoreCandidate>()
         val lock = Any()
         fun mergeItems(items: List<RawStoreCandidate>) {
-            if (items.isEmpty()) return
-            synchronized(lock) { items.forEach { MercadoLivreHtmlParser.mergeCandidate(combined, it) } }
-            onBatch(items)
+            val filtered = if (isMotherboardSearch) {
+                items.filterNot {
+                    NeuralProductMatcher.isAutomotiveOrNonMotherboardCandidate(
+                        title = it.title,
+                        productUrl = it.productUrl,
+                        categoryPath = it.categoryPath,
+                        domainId = it.domainId
+                    )
+                }.map { cand ->
+                    // Strip unverified non-mlstatic SERP snippet thumbnails on motherboard queries so
+                    // photos come from official ML CDN, PDP HTML, or strictly verified motherboard hits.
+                    if (!cand.imageUrl.contains("mlstatic.com", ignoreCase = true) && (
+                            cand.id.startsWith("bg_") || cand.id.startsWith("yh_") ||
+                            cand.id.startsWith("ddg_") || cand.id.startsWith("gw_")
+                        )
+                    ) {
+                        cand.copy(imageUrl = "")
+                    } else {
+                        cand
+                    }
+                }
+            } else {
+                items
+            }
+            if (filtered.isEmpty()) return
+            synchronized(lock) { filtered.forEach { MercadoLivreHtmlParser.mergeCandidate(combined, it) } }
+            onBatch(filtered)
         }
 
         // Launch live image search concurrently
         val imgDeferred = async {
             withTimeoutOrNull(if (expandPool) 7_500L else 5_500L) {
                 if (lightMode) {
-                    fetchBingImages("$clean mercadolivre", bingOffset)
+                    fetchBingImages("$imageSearchQuery mercadolivre", bingOffset)
                 } else if (expandPool) {
-                    val p1 = async { fetchBingImages("site:mercadolivre.com.br $clean", bingOffset) }
-                    val p2 = async { fetchBingImages("$clean mercadolivre", bingOffset + 20) }
-                    val p3 = if (page <= 1) async { fetchBingImages("$clean oferta mercadolivre", bingOffset + 40) } else null
+                    val p1 = async { fetchBingImages("site:mercadolivre.com.br $imageSearchQuery", bingOffset) }
+                    val p2 = async { fetchBingImages("$imageSearchQuery mercadolivre", bingOffset + 20) }
+                    val p3 = if (page <= 1) async { fetchBingImages("$imageSearchQuery oferta mercadolivre", bingOffset + 40) } else null
                     (p1.await() + p2.await() + p3?.await().orEmpty())
-                        .ifEmpty { fetchBingImages("$clean mercadolivre", bingOffset) }
+                        .ifEmpty { fetchBingImages("$imageSearchQuery mercadolivre", bingOffset) }
                 } else {
-                    fetchBingImages("site:mercadolivre.com.br $clean", bingOffset)
-                        .ifEmpty { fetchBingImages("$clean mercadolivre", bingOffset) }
+                    fetchBingImages("site:mercadolivre.com.br $imageSearchQuery", bingOffset)
+                        .ifEmpty { fetchBingImages("$imageSearchQuery mercadolivre", bingOffset) }
                 }
             }.orEmpty()
         }
@@ -1197,20 +1276,36 @@ class MercadoLivreClient(context: Context? = null) {
             val triggerSize = if (expandPool) 56 else 24
             val capSize = if (expandPool) 68 else 30
             synchronized(lock) {
-                val updated = MercadoLivreHtmlParser.applyImageHits(combined.values.toList(), snapshotHits)
-                combined.clear()
-                updated.forEach { MercadoLivreHtmlParser.mergeCandidate(combined, it) }
+                // On motherboard searches, defer search-engine image fallback until AFTER official ML API + PDP HTML run.
+                if (!isMotherboardSearch) {
+                    val updated = MercadoLivreHtmlParser.applyImageHits(combined.values.toList(), snapshotHits)
+                    combined.clear()
+                    updated.forEach { MercadoLivreHtmlParser.mergeCandidate(combined, it) }
+                }
 
                 if (combined.size < triggerSize) {
                     for (hit in snapshotHits) {
                         if (combined.size >= capSize) break
+                        if (isMotherboardSearch && !MercadoLivreHtmlParser.isSafeMotherboardImageHit(hit)) {
+                            continue
+                        }
                         val normalizedUrl = MercadoLivreHtmlParser.normalizeProductUrl(hit.pageUrl)
                         if (!MercadoLivreHtmlParser.isValidProductUrl(normalizedUrl)) continue
                         val title = MercadoLivreHtmlParser.sanitizeCandidateTitle(hit.title, normalizedUrl)
                         val img = hit.preferredImageUrl
                         if (title.length < 6 || img.isBlank()) continue
+                        if (isMotherboardSearch && NeuralProductMatcher.isAutomotiveOrNonMotherboardCandidate(
+                                title = title,
+                                productUrl = normalizedUrl,
+                                categoryPath = domainHint,
+                                domainId = domainHint
+                            )
+                        ) {
+                            continue
+                        }
+                        val isMultiTopicPromoHub = domainHint.isNotBlank()
                         if (MercadoLivreHtmlParser.scoreCompatibleImageHit(clean, hit) <= 0.0 &&
-                            !img.contains("mlstatic.com", true)
+                            (!isMultiTopicPromoHub || !img.contains("mlstatic.com", true))
                         ) {
                             continue
                         }
@@ -1253,6 +1348,12 @@ class MercadoLivreClient(context: Context? = null) {
         desiredCountLabel: String = "10 a 16"
     ): List<RawStoreCandidate> {
         return try {
+            val isMotherboardQuery = NeuralProductMatcher.isMotherboardQueryText(query)
+            val categoryGuard = if (isMotherboardQuery) {
+                "\n                - RESTRIÇÃO DE CATEGORIA: Retorne APENAS placas-mãe de computador/informática (motherboards). NUNCA retorne placas de carro, placas Mercosul, placas veiculares/de moto, suportes/molduras de placa automotiva, placas decorativas ou placas de vídeo."
+            } else {
+                ""
+            }
             val pageHint = if (page > 1) " Traga anúncios diferentes dos primeiros resultados (página $page)." else ""
             val prompt = """
                 Pesquise no Google anúncios reais e ativos no Mercado Livre Brasil (mercadolivre.com.br) para: "$query".$pageHint
@@ -1261,7 +1362,7 @@ class MercadoLivreClient(context: Context? = null) {
                 Regras estritas:
                 - Inclua de $desiredCountLabel anúncios individuais reais encontrados na Busca do Google no Mercado Livre Brasil (páginas com /p/MLB, /up/MLBU, produto.mercadolivre.com.br ou MLB-). NUNCA retorne links genéricos de categorias, lista.mercadolivre, /ofertas ou /mais-vendidos.
                 - Em "title", escreva SOMENTE o nome legível do produto em português com acentos corretos. NUNCA coloque URL, https, www ou domínio em "title".
-                - IMPORTANTE: Preencha "price" com o preço real em R$ exibido na Busca do Google (priorize o preço no Mercado Livre Brasil e, se o snippet do ML omitir R$, use o preço real do mesmo produto/modelo em reais exibido na Busca do Google Brasil). Use formato "R$ 489,90" ou "R$ 1.299,00"; nunca invente nem use "R$ 0,00".
+                - IMPORTANTE: Preencha "price" com o preço real em R$ exibido na Busca do Google (priorize o preço no Mercado Livre Brasil e, se o snippet do ML omitir R$, use o preço real do mesmo produto/modelo em reais exibido na Busca do Google Brasil). Use formato "R$ 489,90" ou "R$ 1.299,00"; nunca invente nem use "R$ 0,00".$categoryGuard
             """.trimIndent()
 
             val response = withTimeoutOrNull(maxAiTimeoutMs) {
@@ -1465,69 +1566,84 @@ class MercadoLivreClient(context: Context? = null) {
             working = enrichDirectItemsViaMultigetApi(working)
         }
 
+        val cleanHintForRank = fallbackSearchHint
+            .replace(hintPromoCleanupRegex, " ")
+            .replace(wsRegex, " ")
+            .trim()
+            .ifBlank { fallbackSearchHint }
+        val relevanceScores = HashMap<Int, Int>(working.size)
+        working.forEachIndexed { idx, item ->
+            relevanceScores[idx] = computeQueryRelevanceRank(item.title, cleanHintForRank)
+        }
+        val rankedWorking = working.withIndex().map { it.index to it.value }
+
         // Run Image/Page enrichment AND Price enrichment IN PARALLEL
-        // Prioritize items that already have images so the top visible cards always receive verified prices.
+        // Prioritize query-relevant items and items with valid photos so the best visible cards receive verified prices.
         val hasNormalPricedSibling = working.any { parseBrlValue(it.priceText) >= 50.0 }
         fun isSuspiciousOrMissingPrice(item: RawStoreCandidate): Boolean {
             val v = parseBrlValue(item.priceText)
             return item.priceText.isBlank() ||
                 (v in 0.01..24.99 && (hasNormalPricedSibling || item.id.startsWith("yh_") || item.id.startsWith("bg_") || item.id.startsWith("ddg_") || item.id.startsWith("ml_") || item.id.startsWith("gw_") || item.id.startsWith("wv_")))
         }
-        val verifyCap = if (parallelPriceEnrichment) 28 else if (includePricePageEnrichment) 32 else 24
-        val needPriceVerificationInitial = working.filter { isSuspiciousOrMissingPrice(it) }
+        val verifyCap = if (parallelPriceEnrichment) 40 else if (includePricePageEnrichment) 36 else 24
+        val needPriceVerificationInitial = rankedWorking
+            .filter { isSuspiciousOrMissingPrice(it.second) }
             .sortedWith(
-                compareByDescending<RawStoreCandidate> { it.priceText.isBlank() }
-                    .thenByDescending { it.imageUrl.isNotBlank() }
-                    .thenBy { it.sourceRank }
+                compareByDescending<Pair<Int, RawStoreCandidate>> { relevanceScores[it.first] ?: 0 }
+                    .thenByDescending { it.second.priceText.isBlank() }
+                    .thenByDescending { it.second.imageUrl.isNotBlank() }
+                    .thenBy { it.second.sourceRank }
             )
+            .map { it.second }
             .take(verifyCap)
 
         val imagesDeferred = async {
             var imgWorking = working
-            val remImgA = deadlineMs - System.currentTimeMillis()
-            if (imgWorking.any { it.imageUrl.isBlank() } && fallbackSearchHint.isNotBlank() && remImgA > 1_500L) {
-                val cleanHint = fallbackSearchHint
-                    .replace(hintPromoCleanupRegex, " ")
-                    .replace(wsRegex, " ")
-                    .trim()
-                    .ifBlank { fallbackSearchHint }
-                val stepATimeout = (remImgA - 1_500L).coerceIn(2_500L, 6_500L)
-                val mlDef = async {
-                    withTimeoutOrNull(stepATimeout) {
-                        fetchBingImages("$cleanHint mercadolivre", first = 1)
+            val isMotherboardHint = NeuralProductMatcher.isMotherboardQueryText(cleanHintForRank)
+
+            // Launch batch image search IN PARALLEL from t=0 so it is NEVER starved by Step 1's deadline,
+            // while ONLY being applied as a last-resort fallback AFTER official API + PDP HTML finish!
+            val batchImgDeferred = async {
+                val remForBatch = deadlineMs - System.currentTimeMillis()
+                if (fallbackSearchHint.isNotBlank() && remForBatch > 2_000L) {
+                    val cleanHint = cleanHintForRank
+                    val batchTimeout = (remForBatch - 1_200L).coerceIn(3_000L, 6_500L)
+                    withTimeoutOrNull(batchTimeout) {
+                        val mlDef = async {
+                            fetchBingImages(buildSafeImageSearchExpr(cleanHint, siteScoped = false), first = 1)
+                        }
+                        val siteDef = async {
+                            fetchBingImages(buildSafeImageSearchExpr(cleanHint, siteScoped = true), first = 1)
+                        }
+                        mlDef.await() + siteDef.await()
                     }.orEmpty()
-                }
-                val siteDef = async {
-                    withTimeoutOrNull((stepATimeout - 500L).coerceAtLeast(2_000L)) {
-                        fetchBingImages("site:mercadolivre.com.br $cleanHint", first = 1)
-                    }.orEmpty()
-                }
-                val batchHits = mlDef.await() + siteDef.await()
-                if (batchHits.isNotEmpty()) {
-                    imgWorking = MercadoLivreHtmlParser.applyImageHits(imgWorking, batchHits)
-                }
+                } else emptyList()
             }
 
-            val pageCap = if (includePricePageEnrichment) 32 else 24
+            // Step 1 (Authoritative FIRST): Official ML API + ML Product Detail Page HTML before any search-engine image fallback.
+            val pageCap = if (includePricePageEnrichment) 40 else 28
             val needEnrichment = imgWorking.withIndex()
                 .filter { (_, cand) ->
+                    val isSnippetCand = isSearchEngineCandidateId(cand.id)
                     cand.imageUrl.isBlank() ||
                         MercadoLivreHtmlParser.looksLikeUrlOrDomain(cand.title) ||
-                        (includePricePageEnrichment && (isSuspiciousOrMissingPrice(cand) || !cand.imageUrl.contains("mlstatic.com", true)))
+                        (includePricePageEnrichment && (isSuspiciousOrMissingPrice(cand) || !cand.imageUrl.contains("mlstatic.com", true) || isSnippetCand)) ||
+                        (isMotherboardHint && isSnippetCand)
                 }
                 .sortedWith(
-                    compareByDescending<IndexedValue<RawStoreCandidate>> { it.value.imageUrl.isBlank() }
+                    compareByDescending<IndexedValue<RawStoreCandidate>> { relevanceScores[it.index] ?: 0 }
+                        .thenByDescending { it.value.imageUrl.isBlank() }
                         .thenByDescending { isSuspiciousOrMissingPrice(it.value) }
                         .thenByDescending { !it.value.imageUrl.contains("mlstatic.com", true) }
                         .thenBy { it.value.sourceRank }
                 )
                 .take(pageCap)
-            val remImgB = deadlineMs - System.currentTimeMillis()
-            if (needEnrichment.isNotEmpty() && remImgB > 1_500L) {
-                val maxStepB = if (includePricePageEnrichment) 16_000L else 14_000L
-                val stepBTimeout = (remImgB - 500L).coerceIn(4_000L, maxStepB)
+            val remImgA = deadlineMs - System.currentTimeMillis()
+            if (needEnrichment.isNotEmpty() && remImgA > 1_500L) {
+                val maxStepA = if (includePricePageEnrichment) 14_500L else 12_500L
+                val stepATimeout = (remImgA - 1_000L).coerceIn(4_000L, maxStepA)
                 val updatedMap = ConcurrentHashMap<Int, RawStoreCandidate>()
-                withTimeoutOrNull(stepBTimeout) {
+                withTimeoutOrNull(stepATimeout) {
                     needEnrichment.mapIndexed { orderIdx, (idx, item) ->
                         async {
                             val enriched = enrichSingleCandidate(
@@ -1542,20 +1658,31 @@ class MercadoLivreClient(context: Context? = null) {
                 imgWorking = imgWorking.mapIndexed { idx, item -> updatedMap[idx] ?: item }
             }
 
+            // Step 2 (Last-resort batch image fallback): Instantly apply pre-fetched batch hits ONLY to items
+            // that STILL have no photo after authoritative API + PDP HTML completed.
+            if (imgWorking.any { it.imageUrl.isBlank() }) {
+                val batchHits = withTimeoutOrNull(1_800L) { batchImgDeferred.await() }.orEmpty()
+                if (batchHits.isNotEmpty()) {
+                    imgWorking = MercadoLivreHtmlParser.applyImageHits(imgWorking, batchHits)
+                }
+            } else {
+                batchImgDeferred.cancel()
+            }
+
             imgWorking
         }
 
+        val oracleHarvestedImageHits = java.util.Collections.synchronizedList(mutableListOf<SearchEngineImageHit>())
+
         val pricesDeferred = async {
-            if (needPriceVerificationInitial.isEmpty()) return@async emptyMap<String, String>()
+            if (needPriceVerificationInitial.isEmpty() && working.none { it.imageUrl.isBlank() }) {
+                return@async emptyMap<String, String>()
+            }
             val mergedMap = ConcurrentHashMap<String, String>()
             val remInitial = deadlineMs - System.currentTimeMillis()
             if (remInitial < 3_000L) return@async emptyMap<String, String>()
 
-            val cleanHint = fallbackSearchHint
-                .replace(hintPromoCleanupRegex, " ")
-                .replace(wsRegex, " ")
-                .trim()
-                .ifBlank { fallbackSearchHint }
+            val cleanHint = cleanHintForRank
             val oracleQueries = buildList {
                 if (cleanHint.isNotBlank()) add(cleanHint)
                 val core = buildCoreQuery(cleanHint)
@@ -1567,10 +1694,10 @@ class MercadoLivreClient(context: Context? = null) {
             }.distinctBy { TextNormalizer.normalize(it) }.take(3)
 
             if (parallelPriceEnrichment) {
-                // Launch Zoom/Buscapé HTTP prices, broad sweep, AND balanced 8-item Grounding batches IN PARALLEL
+                // Launch Zoom/Buscapé HTTP prices + verified product photos, broad sweep, AND 5-item Grounding batches IN PARALLEL
                 val oracleJob = launch {
                     val oraclePrices = withTimeoutOrNull(5_500L) {
-                        fetchStructuredMarketPrices(oracleQueries)
+                        fetchStructuredMarketPrices(oracleQueries, imageHitsOut = oracleHarvestedImageHits)
                     }.orEmpty()
                     if (oraclePrices.isNotEmpty()) mergedMap.putAll(oraclePrices)
                 }
@@ -1582,22 +1709,22 @@ class MercadoLivreClient(context: Context? = null) {
                                 sampleTitles = needPriceVerificationInitial.take(18).map {
                                     MercadoLivreHtmlParser.buildCompactModelQuery(it.title)
                                 },
-                                timeoutMs = (deadlineMs - System.currentTimeMillis() - 400L).coerceIn(6_000L, 19_000L)
+                                timeoutMs = (deadlineMs - System.currentTimeMillis() - 400L).coerceIn(6_000L, 18_000L)
                             )
                             if (sweepRes.isNotEmpty()) mergedMap.putAll(sweepRes)
                         }
                     }
                 }
-                val microBatches = needPriceVerificationInitial.take(24).chunked(8)
+                val microBatches = needPriceVerificationInitial.take(40).chunked(5)
                 val microJobs = microBatches.map { batch ->
                     launch {
                         groundingSemaphore.withPermit {
                             val remForCall = deadlineMs - System.currentTimeMillis() - 350L
-                            if (remForCall >= 4_500L) {
+                            if (remForCall >= 3_800L) {
                                 val batchRes = batchLookupPricesViaGoogleSearch(
                                     missing = batch,
                                     searchHint = cleanHint,
-                                    timeoutMs = remForCall.coerceIn(5_000L, 19_000L)
+                                    timeoutMs = remForCall.coerceIn(4_500L, 16_000L)
                                 )
                                 if (batchRes.isNotEmpty()) mergedMap.putAll(batchRes)
                             }
@@ -1609,23 +1736,23 @@ class MercadoLivreClient(context: Context? = null) {
                 microJobs.forEach { it.join() }
 
                 val remRescue = deadlineMs - System.currentTimeMillis()
-                if (remRescue >= 4_500L) {
+                if (remRescue >= 3_200L) {
                     val fuzzyEntries = prepareFuzzyPriceEntries(mergedMap)
                     val stillMissing = needPriceVerificationInitial
                         .filter { cand -> !hasResolvedPriceInMapPrepared(cand, mergedMap, fuzzyEntries) }
-                        .take(8)
+                        .take(15)
                     if (stillMissing.isNotEmpty()) {
-                        val rescueBatches = stillMissing.chunked(8)
-                        withTimeoutOrNull((remRescue - 250L).coerceAtLeast(4_000L)) {
+                        val rescueBatches = stillMissing.chunked(5)
+                        withTimeoutOrNull((remRescue - 250L).coerceAtLeast(3_000L)) {
                             val rescueJobs = rescueBatches.map { batch ->
                                 launch {
                                     groundingSemaphore.withPermit {
                                         val remForRescue = deadlineMs - System.currentTimeMillis() - 250L
-                                        if (remForRescue >= 4_000L) {
+                                        if (remForRescue >= 3_000L) {
                                             val res = batchLookupPricesViaGoogleSearch(
                                                 missing = batch,
                                                 searchHint = cleanHint,
-                                                timeoutMs = remForRescue.coerceIn(4_000L, 13_000L),
+                                                timeoutMs = remForRescue.coerceIn(3_200L, 11_000L),
                                                 broadFallbackMode = true
                                             )
                                             if (res.isNotEmpty()) mergedMap.putAll(res)
@@ -1644,7 +1771,7 @@ class MercadoLivreClient(context: Context? = null) {
             // AND parallel Tier 2 broad Google Search Grounding query price sweep
             val oracleJob = launch {
                 val oraclePrices = withTimeoutOrNull(4_500L) {
-                    fetchStructuredMarketPrices(oracleQueries)
+                    fetchStructuredMarketPrices(oracleQueries, imageHitsOut = oracleHarvestedImageHits)
                 }.orEmpty()
                 if (oraclePrices.isNotEmpty()) mergedMap.putAll(oraclePrices)
             }
@@ -1732,13 +1859,287 @@ class MercadoLivreClient(context: Context? = null) {
             mergedMap
         }
 
-        val imgResolved = imagesDeferred.await()
+        val imgResolvedInitial = imagesDeferred.await()
         val priceResolvedMap = pricesDeferred.await()
+        val oracleHitsSnapshot = synchronized(oracleHarvestedImageHits) { oracleHarvestedImageHits.toList() }
+        val imgResolved = if (oracleHitsSnapshot.isNotEmpty() && imgResolvedInitial.any { it.imageUrl.isBlank() }) {
+            MercadoLivreHtmlParser.applyImageHits(imgResolvedInitial, oracleHitsSnapshot)
+        } else {
+            imgResolvedInitial
+        }
         if (priceResolvedMap.isNotEmpty()) {
             applyPriceMapToCandidates(imgResolved, priceResolvedMap)
         } else {
             imgResolved
         }
+    }
+
+    /**
+     * Post-filter rescue pass run ONLY on already-approved Mercado Livre MatchedProducts
+     * when any displayed card still lacks a photo, official mlstatic.com upgrade, or price.
+     * Runs official ML multiget API, PDP HTML enrichment, Zoom/Buscapé structured prices+photos,
+     * batch image search, and chunked Google Search Grounding CONCURRENTLY from t=0.
+     * Never wipes existing image URLs via speculative HEAD probes (Coil handles GET retries).
+     */
+    suspend fun enrichApprovedMissingMediaAndPrices(
+        products: List<com.example.data.model.MatchedProduct>,
+        searchHint: String,
+        timeoutMs: Long = 12_000L
+    ): List<com.example.data.model.MatchedProduct> = withContext(Dispatchers.IO) {
+        if (products.isEmpty()) return@withContext products
+
+        val deadlineMs = System.currentTimeMillis() + timeoutMs
+        val needsEntries = products.mapIndexedNotNull { idx, prod ->
+            val missingPhoto = prod.imageUrl.isBlank()
+            val nonOfficialPhoto = !prod.imageUrl.contains("mlstatic.com", ignoreCase = true)
+            val missingPrice = prod.priceText.isBlank() || parseBrlValue(prod.priceText) in 0.01..24.99
+            if (missingPhoto || missingPrice || nonOfficialPhoto) {
+                Triple(idx, missingPrice, missingPhoto)
+            } else null
+        }.sortedWith(
+            compareByDescending<Triple<Int, Boolean, Boolean>> { it.third }
+                .thenByDescending { it.second }
+                .thenBy { it.first }
+        ).take(30)
+        if (needsEntries.isEmpty()) return@withContext products
+
+        val needsIndices = needsEntries.map { it.first }
+        val rawTargets = needsIndices.map { idx ->
+            val p = products[idx]
+            RawStoreCandidate(
+                id = p.id,
+                store = p.store,
+                title = p.title,
+                imageUrl = p.imageUrl,
+                productUrl = p.productUrl,
+                affiliateUrl = p.affiliateUrl,
+                priceText = p.priceText,
+                categoryPath = p.categoryLabel,
+                sourceRank = idx
+            )
+        }
+
+        val multigetMap = ConcurrentHashMap<Int, RawStoreCandidate>()
+        val perItemMap = ConcurrentHashMap<Int, RawStoreCandidate>()
+        val groundedPriceMap = ConcurrentHashMap<String, String>()
+        val batchRescueImageHits = java.util.Collections.synchronizedList(mutableListOf<SearchEngineImageHit>())
+        val cleanHint = searchHint.trim()
+
+        withTimeoutOrNull(timeoutMs) {
+            coroutineScope {
+                val multigetJob = launch {
+                    val afterMultiget = withTimeoutOrNull(4_000L) {
+                        enrichDirectItemsViaMultigetApi(rawTargets)
+                    }.orEmpty()
+                    afterMultiget.forEachIndexed { localIdx, cand ->
+                        multigetMap[needsIndices[localIdx]] = cand
+                    }
+                }
+
+                val perItemJob = launch {
+                    val itemJobs = rawTargets.take(24).mapIndexed { localIdx, cand ->
+                        val origIdx = needsIndices[localIdx]
+                        async {
+                            val enriched = enrichSingleCandidate(
+                                candidate = cand,
+                                allowBingFallback = cand.imageUrl.isBlank(),
+                                allowPricePageEnrichment = true
+                            )
+                            perItemMap[origIdx] = enriched
+                        }
+                    }
+                    itemJobs.awaitAll()
+                }
+
+                val missingPhotoTargets = rawTargets.filter { it.imageUrl.isBlank() }
+                val batchImgJob = launch {
+                    if (missingPhotoTargets.isNotEmpty()) {
+                        val imgQueries = buildList {
+                            if (cleanHint.isNotBlank()) {
+                                add(buildSafeImageSearchExpr(cleanHint, siteScoped = false))
+                                add(buildSafeImageSearchExpr(cleanHint, siteScoped = true))
+                            }
+                            missingPhotoTargets.take(2).forEach { cand ->
+                                val shortT = MercadoLivreHtmlParser.buildCompactModelQuery(cand.title)
+                                    .split(' ').take(5).joinToString(" ")
+                                if (shortT.length >= 4) {
+                                    add(buildSafeImageSearchExpr(shortT, siteScoped = false))
+                                }
+                            }
+                        }.distinct().take(4)
+                        val hits = withTimeoutOrNull(6_000L) {
+                            imgQueries.map { q ->
+                                async { fetchBingImages(q, first = 1) }
+                            }.awaitAll().flatten()
+                        }.orEmpty()
+                        if (hits.isNotEmpty()) batchRescueImageHits.addAll(hits)
+                    }
+                }
+
+                val missingPriceTargets = rawTargets.filter {
+                    it.priceText.isBlank() || parseBrlValue(it.priceText) in 0.01..24.99
+                }.take(25)
+
+                val oracleJob = launch {
+                    if ((missingPriceTargets.isNotEmpty() || missingPhotoTargets.isNotEmpty()) && cleanHint.isNotBlank()) {
+                        val oraclePrices = withTimeoutOrNull(4_500L) {
+                            fetchStructuredMarketPrices(
+                                queries = listOf(cleanHint),
+                                imageHitsOut = batchRescueImageHits
+                            )
+                        }.orEmpty()
+                        if (oraclePrices.isNotEmpty()) groundedPriceMap.putAll(oraclePrices)
+                    }
+                }
+
+                val groundingJobs = missingPriceTargets.chunked(5).map { batch ->
+                    launch {
+                        groundingSemaphore.withPermit {
+                            val rem = deadlineMs - System.currentTimeMillis() - 400L
+                            if (rem >= 3_200L) {
+                                val res = batchLookupPricesViaGoogleSearch(
+                                    missing = batch,
+                                    searchHint = cleanHint,
+                                    timeoutMs = rem.coerceIn(3_500L, 9_500L),
+                                    broadFallbackMode = false
+                                )
+                                if (res.isNotEmpty()) groundedPriceMap.putAll(res)
+                            }
+                        }
+                    }
+                }
+
+                multigetJob.join()
+                perItemJob.join()
+                batchImgJob.join()
+                oracleJob.join()
+                groundingJobs.forEach { it.join() }
+
+                // Quick final broad rescue if any approved cards still lack a price and >= 3.2s remain
+                val remAfter = deadlineMs - System.currentTimeMillis()
+                if (remAfter >= 3_200L) {
+                    val fuzzyEntries = prepareFuzzyPriceEntries(groundedPriceMap)
+                    val stillNoPrice = rawTargets.filterIndexed { localIdx, orig ->
+                        val origIdx = needsIndices[localIdx]
+                        val mgPrice = multigetMap[origIdx]?.priceText.orEmpty()
+                        val piPrice = perItemMap[origIdx]?.priceText.orEmpty()
+                        val hasOfficial = (mgPrice.isNotBlank() && parseBrlValue(mgPrice) >= 25.0) ||
+                            (piPrice.isNotBlank() && parseBrlValue(piPrice) >= 25.0) ||
+                            (orig.priceText.isNotBlank() && parseBrlValue(orig.priceText) >= 25.0)
+                        !hasOfficial && !hasResolvedPriceInMapPrepared(orig, groundedPriceMap, fuzzyEntries)
+                    }.take(10)
+                    if (stillNoPrice.isNotEmpty()) {
+                        stillNoPrice.chunked(5).map { batch ->
+                            launch {
+                                groundingSemaphore.withPermit {
+                                    val remRescue = deadlineMs - System.currentTimeMillis() - 250L
+                                    if (remRescue >= 2_800L) {
+                                        val res = batchLookupPricesViaGoogleSearch(
+                                            missing = batch,
+                                            searchHint = cleanHint,
+                                            timeoutMs = remRescue.coerceIn(3_000L, 6_500L),
+                                            broadFallbackMode = true
+                                        )
+                                        if (res.isNotEmpty()) groundedPriceMap.putAll(res)
+                                    }
+                                }
+                            }
+                        }.forEach { it.join() }
+                    }
+                }
+            }
+        }
+
+        // Apply grounded/oracle prices and last-resort batch photos onto merged copies
+        val mergedCandidatesByIdx = HashMap<Int, RawStoreCandidate>(needsIndices.size)
+        for ((localIdx, origIdx) in needsIndices.withIndex()) {
+            val orig = rawTargets[localIdx]
+            val mg = multigetMap[origIdx]
+            val pi = perItemMap[origIdx]
+            val isSnippet = isSearchEngineCandidateId(orig.id)
+
+            val bestImg = when {
+                mg != null && mg.imageUrl.contains("mlstatic.com", true) -> mg.imageUrl
+                pi != null && pi.imageUrl.contains("mlstatic.com", true) && (orig.imageUrl.isBlank() || isSnippet || !orig.imageUrl.contains("mlstatic.com", true)) -> pi.imageUrl
+                orig.imageUrl.isBlank() && pi != null && pi.imageUrl.isNotBlank() -> pi.imageUrl
+                orig.imageUrl.isBlank() && mg != null && mg.imageUrl.isNotBlank() -> mg.imageUrl
+                else -> orig.imageUrl
+            }
+            val origVal = parseBrlValue(orig.priceText)
+            val mgPrice = mg?.priceText.orEmpty()
+            val piPrice = pi?.priceText.orEmpty()
+            val bestOfficialPrice = when {
+                mgPrice.isNotBlank() && (orig.priceText.isBlank() || (origVal in 0.01..24.99 && parseBrlValue(mgPrice) > origVal)) -> mgPrice
+                piPrice.isNotBlank() && (orig.priceText.isBlank() || (origVal in 0.01..24.99 && parseBrlValue(piPrice) > origVal)) -> piPrice
+                else -> orig.priceText
+            }
+            mergedCandidatesByIdx[origIdx] = orig.copy(imageUrl = bestImg, priceText = bestOfficialPrice)
+        }
+
+        val rescueHitsSnapshot = synchronized(batchRescueImageHits) { batchRescueImageHits.toList() }
+        if (rescueHitsSnapshot.isNotEmpty() && mergedCandidatesByIdx.values.any { it.imageUrl.isBlank() }) {
+            val mergedList = needsIndices.mapNotNull { mergedCandidatesByIdx[it] }
+            val withBatchImg = MercadoLivreHtmlParser.applyImageHits(mergedList, rescueHitsSnapshot)
+            withBatchImg.forEachIndexed { localIdx, c ->
+                mergedCandidatesByIdx[needsIndices[localIdx]] = c
+            }
+        }
+
+        if (groundedPriceMap.isNotEmpty()) {
+            val mergedList = needsIndices.mapNotNull { mergedCandidatesByIdx[it] }
+            val withGrounded = applyPriceMapToCandidates(mergedList, groundedPriceMap)
+            withGrounded.forEachIndexed { localIdx, c ->
+                mergedCandidatesByIdx[needsIndices[localIdx]] = c
+            }
+        }
+
+        if (mergedCandidatesByIdx.isEmpty()) return@withContext products
+        products.mapIndexed { idx, prod ->
+            val patched = mergedCandidatesByIdx[idx] ?: return@mapIndexed prod
+            val isSnippet = isSearchEngineCandidateId(prod.id)
+            val bestImg = when {
+                patched.imageUrl.isNotBlank() && prod.imageUrl.isBlank() -> patched.imageUrl
+                patched.imageUrl.contains("mlstatic.com", true) && (isSnippet || !prod.imageUrl.contains("mlstatic.com", true)) -> patched.imageUrl
+                else -> prod.imageUrl
+            }
+            val bestPrice = when {
+                patched.priceText.isNotBlank() && prod.priceText.isBlank() -> patched.priceText
+                patched.priceText.isNotBlank() && parseBrlValue(prod.priceText) in 0.01..24.99 &&
+                    parseBrlValue(patched.priceText) > parseBrlValue(prod.priceText) -> patched.priceText
+                else -> prod.priceText
+            }
+            if (bestImg == prod.imageUrl && bestPrice == prod.priceText) {
+                prod
+            } else {
+                prod.copy(imageUrl = bestImg, priceText = bestPrice)
+            }
+        }
+    }
+
+    private fun computeQueryRelevanceRank(title: String, queryHint: String): Int {
+        if (queryHint.isBlank() || title.isBlank()) return 0
+        val normTitle = TextNormalizer.normalize(title)
+        val normQuery = TextNormalizer.normalize(queryHint)
+        val qTokens = TextNormalizer.tokenize(normQuery).filter { it.length >= 2 }.toSet()
+        val tTokens = TextNormalizer.tokenize(normTitle).filter { it.length >= 2 }.toSet()
+        if (qTokens.isEmpty() || tTokens.isEmpty()) return 0
+
+        var score = 0
+        for (qt in qTokens) {
+            if (qt in tTokens || normTitle.contains(qt)) {
+                score += if (qt.any(Char::isDigit)) 4 else 2
+            }
+        }
+        if (NeuralProductMatcher.isMotherboardQueryText(queryHint) &&
+            NeuralProductMatcher.isAutomotiveOrNonMotherboardCandidate(title)
+        ) {
+            return -50
+        }
+        val queryIsAccessory = qTokens.any { it in fuzzyAccessoryWords }
+        if (!queryIsAccessory && tTokens.any { it in fuzzyAccessoryWords }) {
+            score -= 6
+        }
+        return score
     }
 
     private suspend fun enrichDirectItemsViaMultigetApi(
@@ -1999,6 +2400,16 @@ class MercadoLivreClient(context: Context? = null) {
         return findBestFuzzyPricePrepared(normItemTitle, prepared)
     }
 
+    private fun isSearchEngineCandidateId(id: String): Boolean {
+        return id.startsWith("bg_") ||
+            id.startsWith("yh_") ||
+            id.startsWith("ddg_") ||
+            id.startsWith("gw_") ||
+            id.startsWith("gs_") ||
+            id.startsWith("gc_") ||
+            id.startsWith("bi_")
+    }
+
     private suspend fun enrichSingleCandidate(
         candidate: RawStoreCandidate,
         allowBingFallback: Boolean,
@@ -2009,21 +2420,24 @@ class MercadoLivreClient(context: Context? = null) {
         var priceText = candidate.priceText
 
         val existingVal = parseBrlValue(priceText)
+        val isFromSearchSnippet = isSearchEngineCandidateId(candidate.id)
         val needImage = imageUrl.isBlank()
         val needTitle = MercadoLivreHtmlParser.looksLikeUrlOrDomain(title)
         val needPrice = allowPricePageEnrichment && (priceText.isBlank() || existingVal in 0.01..24.99)
-        val wantMlCdnUpgrade = allowPricePageEnrichment && !imageUrl.contains("mlstatic.com", true)
-        if (!needImage && !needTitle && !needPrice && !wantMlCdnUpgrade) {
+        val wantOfficialPhoto = isFromSearchSnippet || (allowPricePageEnrichment && !imageUrl.contains("mlstatic.com", true))
+        if (!needImage && !needTitle && !needPrice && !wantOfficialPhoto) {
             return@coroutineScope candidate.copy(title = title, imageUrl = imageUrl, priceText = priceText)
         }
 
         val titleWords = title.split(' ').filter { it.length >= 2 && it.any { ch -> ch.isLetterOrDigit() } }
         val shortTitleQuery = titleWords.take(5).joinToString(" ")
+        val mlbId = MercadoLivreHtmlParser.extractMlbId(candidate.productUrl)
 
-        // Run API metadata, Promoções-grade desktop ML product page HTML, and clean image fallback IN PARALLEL
-        val hasMlbId = !MercadoLivreHtmlParser.extractMlbId(candidate.productUrl).isNullOrBlank()
+        // Run API metadata, Promoções-grade desktop ML product page HTML, and guarded image fallback IN PARALLEL.
+        // Authoritative API + PDP HTML ALWAYS take precedence over search-engine photos.
+        val hasMlbId = !mlbId.isNullOrBlank()
         val apiDeferred = async {
-            if (hasMlbId && (allowBingFallback || allowPricePageEnrichment)) {
+            if (hasMlbId && (allowBingFallback || allowPricePageEnrichment || wantOfficialPhoto)) {
                 withTimeoutOrNull(4_800L) {
                     apiMetadataSemaphore.withPermit {
                         withTimeoutOrNull(4_500L) {
@@ -2036,8 +2450,8 @@ class MercadoLivreClient(context: Context? = null) {
             }
         }
         val pageDeferred = async {
-            val totalBudgetMs = if (allowPricePageEnrichment) 7_500L else 4_200L
-            val innerTimeoutMs = if (allowPricePageEnrichment) 6_800L else 3_800L
+            val totalBudgetMs = if (allowPricePageEnrichment) 7_500L else 4_500L
+            val innerTimeoutMs = if (allowPricePageEnrichment) 6_800L else 4_000L
             withTimeoutOrNull(totalBudgetMs) {
                 pageFetchSemaphore.withPermit {
                     withTimeoutOrNull(innerTimeoutMs) {
@@ -2054,40 +2468,38 @@ class MercadoLivreClient(context: Context? = null) {
         }
         val imgFallbackDeferred = async {
             if (allowBingFallback && needImage && shortTitleQuery.isNotBlank()) {
-                withTimeoutOrNull(6_000L) {
-                    fetchBingImages("$shortTitleQuery mercadolivre", first = 1)
+                withTimeoutOrNull(5_500L) {
+                    fetchBingImages(buildSafeImageSearchExpr(shortTitleQuery, siteScoped = false), first = 1)
                 }.orEmpty()
             } else emptyList()
         }
 
+        var hasAuthoritativePhoto = !isFromSearchSnippet && imageUrl.contains("mlstatic.com", true)
+
+        // 1) Official Mercado Livre API (highest authority)
         val (apiTitle, apiImg, apiPrice) = withTimeoutOrNull(4_900L) { apiDeferred.await() } ?: Triple("", "", "")
         if (apiTitle.length >= 6 && (MercadoLivreHtmlParser.looksLikeUrlOrDomain(title) || apiTitle.length > title.length)) {
             title = apiTitle
         }
-        if (apiImg.isNotBlank() && (imageUrl.isBlank() || (!imageUrl.contains("mlstatic.com", true) && apiImg.contains("mlstatic.com", true)))) {
+        if (apiImg.isNotBlank() && (imageUrl.isBlank() || !hasAuthoritativePhoto || (!imageUrl.contains("mlstatic.com", true) && apiImg.contains("mlstatic.com", true)))) {
             imageUrl = apiImg
+            if (apiImg.contains("mlstatic.com", true)) hasAuthoritativePhoto = true
         }
-        if (apiPrice.isNotBlank() && (priceText.isBlank() || (parseBrlValue(priceText) in 0.01..24.99 && parseBrlValue(apiPrice) > parseBrlValue(priceText)))) {
+        val apiPriceVal = parseBrlValue(apiPrice)
+        if (apiPrice.isNotBlank() && (priceText.isBlank() ||
+                (isFromSearchSnippet && apiPriceVal >= 15.0) ||
+                (parseBrlValue(priceText) in 0.01..24.99 && apiPriceVal > parseBrlValue(priceText)))
+        ) {
             priceText = apiPrice
         }
 
-        if (imageUrl.isBlank()) {
-            val imgHits = withTimeoutOrNull(5_500L) { imgFallbackDeferred.await() }.orEmpty()
-            if (imgHits.isNotEmpty()) {
-                val best = MercadoLivreHtmlParser.pickFallbackCandidateImageHit(title, candidate.productUrl, imgHits)
-                val resolved = HtmlTextDecoder.normalizeImageUrl(best?.preferredImageUrl.orEmpty())
-                if (resolved.isNotBlank()) imageUrl = resolved
-            }
-        } else {
-            imgFallbackDeferred.cancel()
-        }
-
+        // 2) Official Mercado Livre Product Page HTML (ALWAYS awaited BEFORE search-engine image fallback!)
         val stillNeedsPrice = priceText.isBlank() || (allowPricePageEnrichment && parseBrlValue(priceText) in 0.01..24.99)
-        val stillNeedsOfficialPhoto = imageUrl.isBlank() || (allowPricePageEnrichment && !imageUrl.contains("mlstatic.com", true))
+        val stillNeedsOfficialPhoto = imageUrl.isBlank() || !hasAuthoritativePhoto
         if (stillNeedsOfficialPhoto || stillNeedsPrice || MercadoLivreHtmlParser.looksLikeUrlOrDomain(title)) {
             val pageWaitMs = when {
                 allowPricePageEnrichment && (imageUrl.isBlank() || priceText.isBlank()) -> 6_500L
-                imageUrl.isBlank() -> 3_800L
+                imageUrl.isBlank() || !hasAuthoritativePhoto -> 4_000L
                 else -> 2_200L
             }
             val html = withTimeoutOrNull(pageWaitMs) { pageDeferred.await() }.orEmpty()
@@ -2096,10 +2508,15 @@ class MercadoLivreClient(context: Context? = null) {
                 if (pTitle.length >= 6 && (MercadoLivreHtmlParser.looksLikeUrlOrDomain(title) || pTitle.length > title.length)) {
                     title = pTitle
                 }
-                if (pImg.isNotBlank() && (imageUrl.isBlank() || (!imageUrl.contains("mlstatic.com", true) && pImg.contains("mlstatic.com", true)))) {
+                if (pImg.isNotBlank() && (imageUrl.isBlank() || !hasAuthoritativePhoto || (!imageUrl.contains("mlstatic.com", true) && pImg.contains("mlstatic.com", true)))) {
                     imageUrl = pImg
+                    if (pImg.contains("mlstatic.com", true)) hasAuthoritativePhoto = true
                 }
-                if (pPrice.isNotBlank() && (priceText.isBlank() || (parseBrlValue(priceText) in 0.01..24.99 && parseBrlValue(pPrice) > parseBrlValue(priceText)))) {
+                val pPriceVal = parseBrlValue(pPrice)
+                if (pPrice.isNotBlank() && (priceText.isBlank() ||
+                        (isFromSearchSnippet && pPriceVal >= 15.0) ||
+                        (parseBrlValue(priceText) in 0.01..24.99 && pPriceVal > parseBrlValue(priceText)))
+                ) {
                     priceText = pPrice
                 }
             } else {
@@ -2107,6 +2524,19 @@ class MercadoLivreClient(context: Context? = null) {
             }
         } else {
             pageDeferred.cancel()
+        }
+
+        // 3) Last-resort strictly filtered image search ONLY when both API and PDP failed to provide a photo.
+        // Never search by bare MLB ID (MLB+digits collides with Brazilian car license plate formats).
+        if (imageUrl.isBlank()) {
+            val imgHits = withTimeoutOrNull(4_500L) { imgFallbackDeferred.await() }.orEmpty()
+            if (imgHits.isNotEmpty()) {
+                val best = MercadoLivreHtmlParser.pickFallbackCandidateImageHit(title, candidate.productUrl, imgHits)
+                val resolved = HtmlTextDecoder.normalizeImageUrl(best?.preferredImageUrl.orEmpty())
+                if (resolved.isNotBlank()) imageUrl = resolved
+            }
+        } else {
+            imgFallbackDeferred.cancel()
         }
 
         candidate.copy(title = title, imageUrl = imageUrl, priceText = priceText)
@@ -2205,7 +2635,8 @@ class MercadoLivreClient(context: Context? = null) {
     }
 
     private suspend fun fetchStructuredMarketPrices(
-        queries: List<String>
+        queries: List<String>,
+        imageHitsOut: MutableList<SearchEngineImageHit>? = null
     ): Map<String, String> = coroutineScope {
         if (queries.isEmpty()) return@coroutineScope emptyMap()
         val urls = queries.flatMap { q ->
@@ -2221,11 +2652,15 @@ class MercadoLivreClient(context: Context? = null) {
             launch {
                 val html = withTimeoutOrNull(4_000L) { fetchSimpleHtml(url) }.orEmpty()
                 if (html.isNotBlank()) {
-                    MercadoLivreHtmlParser.parseNextDataPriceCatalog(html).forEach { (title, price) ->
+                    val (prices, imgHits) = MercadoLivreHtmlParser.parseNextDataMediaAndPriceCatalog(html)
+                    prices.forEach { (title, price) ->
                         val normKey = TextNormalizer.normalize(title)
                         if (normKey.length >= 6 && price.isNotBlank()) {
                             out.putIfAbsent(normKey, price)
                         }
+                    }
+                    if (imageHitsOut != null && imgHits.isNotEmpty()) {
+                        imageHitsOut.addAll(imgHits)
                     }
                 }
             }
@@ -2320,17 +2755,41 @@ class MercadoLivreClient(context: Context? = null) {
         }
     }
 
-    private suspend fun fetchBingImages(searchExpr: String, first: Int = 1): List<SearchEngineImageHit> = coroutineScope {
-        val encoded = URLEncoder.encode(searchExpr, "UTF-8")
-        // Omitting cc=BR&setlang=pt-BR and using HDRSC3 avoids Bing Images' empty JS-only shell response
-        val bingHtml = bingImageSemaphore.withPermit {
-            withTimeoutOrNull(4_800L) {
-                fetchSimpleHtml("https://www.bing.com/images/search?q=$encoded&first=$first&form=HDRSC3", useQuickImageClient = true)
-            }.orEmpty()
+    private val negativeOperatorTokenRegex = Regex("""(?<!\S)-\S+""")
+
+    private fun sanitizeMotherboardImageExpr(rawExpr: String): String {
+        val trimmed = rawExpr.replace(wsRegex, " ").trim()
+        if (trimmed.isBlank()) return ""
+        if (!NeuralProductMatcher.isMotherboardQueryText(trimmed)) return trimmed
+        val normTokens = TextNormalizer.tokenize(trimmed, dropStopWords = false).toSet()
+        val hasSpecificHardwareToken = normTokens.any { it in NeuralProductMatcher.MOTHERBOARD_HARDWARE_TOKENS }
+        val sb = StringBuilder(trimmed)
+        if (!hasSpecificHardwareToken && !trimmed.contains("computador", true) && !trimmed.contains("motherboard", true)) {
+            sb.append(" computador")
         }
-        val bingHits = MercadoLivreHtmlParser.parseBingImagesHtml(bingHtml)
-        val bareExpr = searchExpr
+        if (!trimmed.contains("-carro", true)) sb.append(" -carro")
+        if (!trimmed.contains("-mercosul", true)) sb.append(" -mercosul")
+        return sb.toString()
+    }
+
+    private fun buildSafeImageSearchExpr(rawQuery: String, siteScoped: Boolean): String {
+        val safeBase = sanitizeMotherboardImageExpr(rawQuery)
+        if (safeBase.isBlank()) return ""
+        return if (siteScoped) {
+            "site:mercadolivre.com.br $safeBase"
+        } else if (safeBase.contains("mercadolivre", true)) {
+            safeBase
+        } else {
+            "$safeBase mercadolivre"
+        }
+    }
+
+    private suspend fun fetchBingImages(searchExpr: String, first: Int = 1): List<SearchEngineImageHit> = coroutineScope {
+        val safeExpr = sanitizeMotherboardImageExpr(searchExpr)
+        val isMotherboardExpr = NeuralProductMatcher.isMotherboardQueryText(safeExpr)
+        val bareExpr = safeExpr
             .replace(siteColonRegex, " ")
+            .replace(negativeOperatorTokenRegex, " ")
             .replace(wsRegex, " ")
             .trim()
         val scopedFallbackExpr = if (bareExpr.contains("mercadolivre", true)) {
@@ -2338,16 +2797,54 @@ class MercadoLivreClient(context: Context? = null) {
         } else {
             "$bareExpr mercadolivre".trim()
         }
+        val cleanNoMlExpr = bareExpr
+            .replace("mercadolivre", "", ignoreCase = true)
+            .replace(wsRegex, " ")
+            .trim()
+            .ifBlank { bareExpr }
         val encodedScoped = URLEncoder.encode(scopedFallbackExpr, "UTF-8")
-        val result = if (bingHits.size >= 5) {
+        val encodedClean = URLEncoder.encode(cleanNoMlExpr, "UTF-8")
+
+        // Run Bing /images/async (server-rendered raw tiles that bypass Bing BR's JS-only shell!)
+        // AND /images/search IN PARALLEL without negative -operators (strict Kotlin filtering runs below).
+        val bingAsyncDef = async {
+            bingImageSemaphore.withPermit {
+                withTimeoutOrNull(4_800L) {
+                    val html = fetchSimpleHtml(
+                        "https://www.bing.com/images/async?q=$encodedScoped&first=$first&count=35&relp=35&mmasync=1",
+                        useQuickImageClient = true
+                    )
+                    MercadoLivreHtmlParser.parseBingImagesHtml(html)
+                }.orEmpty()
+            }
+        }
+        val bingSearchDef = async {
+            bingImageSemaphore.withPermit {
+                withTimeoutOrNull(4_800L) {
+                    val html = fetchSimpleHtml(
+                        "https://www.bing.com/images/search?q=$encodedScoped&first=$first&form=HDRSC3",
+                        useQuickImageClient = true
+                    )
+                    MercadoLivreHtmlParser.parseBingImagesHtml(html)
+                }.orEmpty()
+            }
+        }
+        val rawBingHits = bingAsyncDef.await() + bingSearchDef.await()
+        val bingHits = if (isMotherboardExpr) {
+            rawBingHits.filter { MercadoLivreHtmlParser.isSafeMotherboardImageHit(it) }
+        } else {
+            rawBingHits
+        }
+
+        val rawResult = if (bingHits.size >= 6) {
             bingHits
         } else {
-            val cleanBingDef = if (searchExpr.contains("site:", true) && scopedFallbackExpr.isNotBlank()) {
+            val cleanAsyncDef = if (cleanNoMlExpr != scopedFallbackExpr) {
                 async {
                     withTimeoutOrNull(4_500L) {
                         bingImageSemaphore.withPermit {
                             val html = fetchSimpleHtml(
-                                "https://www.bing.com/images/search?q=$encodedScoped&first=$first&form=HDRSC3",
+                                "https://www.bing.com/images/async?q=$encodedClean&first=$first&count=35&relp=35&mmasync=1",
                                 useQuickImageClient = true
                             )
                             MercadoLivreHtmlParser.parseBingImagesHtml(html)
@@ -2355,27 +2852,38 @@ class MercadoLivreClient(context: Context? = null) {
                     }.orEmpty()
                 }
             } else null
+            // Yahoo BR + Yahoo Global + Google Images fallbacks use bounded tile parsing and are strictly
+            // filtered by isSafeMotherboardImageHit below whenever isMotherboardExpr is true.
             val yahooDef = async {
                 withTimeoutOrNull(4_200L) {
                     val yahooHtml = fetchSimpleHtml(
-                        "https://images.search.yahoo.com/search/images?p=$encodedScoped&fr=sfp&ei=UTF-8",
+                        "https://br.images.search.yahoo.com/search/images?p=$encodedScoped&fr=sfp&ei=UTF-8",
                         useQuickImageClient = true
-                    )
+                    ).ifBlank {
+                        fetchSimpleHtml(
+                            "https://images.search.yahoo.com/search/images?p=$encodedClean&fr=sfp&ei=UTF-8",
+                            useQuickImageClient = true
+                        )
+                    }
                     MercadoLivreHtmlParser.parseYahooImagesHtml(yahooHtml)
                 }.orEmpty()
             }
             val googleDef = async {
                 withTimeoutOrNull(4_200L) {
                     val googleHtml = fetchSimpleHtml(
-                        "https://www.google.com/search?q=$encodedScoped&udm=2&hl=pt-BR&gl=BR",
+                        "https://www.google.com/search?q=$encodedClean&udm=2&hl=pt-BR&gl=BR",
                         useQuickImageClient = true
                     )
                     MercadoLivreHtmlParser.parseGoogleImagesHtml(googleHtml)
                 }.orEmpty()
             }
-            (bingHits + cleanBingDef?.await().orEmpty() + yahooDef.await() + googleDef.await())
+            bingHits + cleanAsyncDef?.await().orEmpty() + yahooDef.await() + googleDef.await()
         }
-        result
+        if (isMotherboardExpr) {
+            rawResult.filter { MercadoLivreHtmlParser.isSafeMotherboardImageHit(it) }
+        } else {
+            rawResult
+        }
     }
 
     private fun fetchSimpleHtml(url: String, useQuickImageClient: Boolean = false): String {
@@ -2408,6 +2916,17 @@ class MercadoLivreClient(context: Context? = null) {
         var currentUrl = url
         var referer: String? = "https://www.mercadolivre.com.br/"
         val hopCookies = LinkedHashMap<String, String>()
+        val wvCookieHeader = webViewExtractor.getCookiesForUrl(url)
+        if (wvCookieHeader.isNotBlank()) {
+            for (part in wvCookieHeader.split(';')) {
+                val eq = part.indexOf('=')
+                if (eq > 0) {
+                    val k = part.substring(0, eq).trim()
+                    val v = part.substring(eq + 1).trim()
+                    if (k.isNotBlank()) hopCookies[k] = v
+                }
+            }
+        }
         val httpCaller = clientOverride ?: if (useQuickClient) quickPageClient else noRedirectClient
         val userAgent = if (useDesktopUa) desktopUa else mobileUa
 
@@ -2553,8 +3072,8 @@ class MercadoLivreClient(context: Context? = null) {
         val cleanList = deduped.values.toList()
         return cleanList.sortedWith(
             compareByDescending<RawStoreCandidate> { it.imageUrl.isNotBlank() && it.priceText.isNotBlank() }
-                .thenByDescending { it.priceText.isNotBlank() }
                 .thenByDescending { it.imageUrl.isNotBlank() }
+                .thenByDescending { it.priceText.isNotBlank() }
                 .thenBy { it.sourceRank }
         )
     }
